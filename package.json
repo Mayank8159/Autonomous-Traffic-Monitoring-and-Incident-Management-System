@@ -9,9 +9,6 @@
     "deploy:backend": "cd packages/backend && sam build && sam deploy --guided",
     "deploy:frontend": "cd packages/frontend && vercel deploy"
   },
-  "devDependencies": {
-    "turbo": "^2.0.0"
-  },
   "packageManager": "yarn@1.22.19",
   "engines": {
     "node": ">=18"
