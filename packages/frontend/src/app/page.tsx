@@ -2,11 +2,16 @@ import { StatCard } from "@/components/StatCard";
 import { DensityGrid } from "@/components/DensityGrid";
 import { IncidentCard } from "@/components/IncidentCard";
 import { getTracks, getFlow, getDensity, getIncidents, getStatus } from "@/lib/api";
+import type { TrackInfo, FlowStats, DensityCell, IncidentInfo, SystemStatus } from "@/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  let tracks, flow, density, incidents, status;
+  let tracks: TrackInfo[] = [];
+  let flow: FlowStats = { entry_count: 0, exit_count: 0, total_vehicles: 0, flow_rate_per_min: 0 };
+  let density: DensityCell[] = Array.from({ length: 9 }, (_, i) => ({ row: Math.floor(i / 3), col: i % 3, level: "clear" as const }));
+  let incidents: IncidentInfo[] = [];
+  let status: SystemStatus = { active_tracks: 0, total_incidents: 0, last_update: Date.now() };
 
   try {
     [tracks, flow, density, incidents, status] = await Promise.all([
@@ -17,11 +22,7 @@ export default async function DashboardPage() {
       getStatus(),
     ]);
   } catch {
-    tracks = [];
-    flow = { entry_count: 0, exit_count: 0, total_vehicles: 0, flow_rate_per_min: 0 };
-    density = Array.from({ length: 9 }, (_, i) => ({ row: Math.floor(i / 3), col: i % 3, level: "clear" as const }));
-    incidents = [];
-    status = { active_tracks: 0, total_incidents: 0, last_update: Date.now() };
+    // use defaults
   }
 
   return (

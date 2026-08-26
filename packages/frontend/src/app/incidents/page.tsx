@@ -1,14 +1,15 @@
 import { IncidentCard } from "@/components/IncidentCard";
 import { getIncidents } from "@/lib/api";
+import type { IncidentInfo } from "@/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function IncidentsPage() {
-  let incidents;
+  let incidents: IncidentInfo[] = [];
   try {
     incidents = await getIncidents(50);
   } catch {
-    incidents = [];
+    // use default
   }
 
   const byType = incidents.reduce(

@@ -1,9 +1,13 @@
 import { getFlow, getDensity, getTracks, getStatus } from "@/lib/api";
+import type { FlowStats, DensityCell, TrackInfo, SystemStatus } from "@/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function AnalyticsPage() {
-  let flow, density, tracks, status;
+  let flow: FlowStats = { entry_count: 0, exit_count: 0, total_vehicles: 0, flow_rate_per_min: 0 };
+  let density: DensityCell[] = Array.from({ length: 9 }, (_, i) => ({ row: Math.floor(i / 3), col: i % 3, level: "clear" as const }));
+  let tracks: TrackInfo[] = [];
+  let status: SystemStatus = { active_tracks: 0, total_incidents: 0, last_update: Date.now() };
   try {
     [flow, density, tracks, status] = await Promise.all([
       getFlow(),
@@ -12,10 +16,7 @@ export default async function AnalyticsPage() {
       getStatus(),
     ]);
   } catch {
-    flow = { entry_count: 0, exit_count: 0, total_vehicles: 0, flow_rate_per_min: 0 };
-    density = Array.from({ length: 9 }, (_, i) => ({ row: Math.floor(i / 3), col: i % 3, level: "clear" as const }));
-    tracks = [];
-    status = { active_tracks: 0, total_incidents: 0, last_update: Date.now() };
+    // use defaults
   }
 
   const speedBuckets = [0, 0, 0, 0];
