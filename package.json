@@ -1,17 +1,13 @@
 {
   "name": "autonomous-traffic-monitoring",
   "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
   "scripts": {
-    "dev": "turbo dev",
-    "build": "turbo build",
-    "lint": "turbo lint",
-    "test": "turbo test",
+    "dev": "cd packages/frontend && next dev --port 3000",
+    "build": "cd packages/frontend && next build",
+    "start": "cd packages/frontend && next start",
+    "lint": "cd packages/frontend && next lint",
     "deploy:backend": "cd packages/backend && sam build && sam deploy --guided",
-    "deploy:frontend": "cd packages/frontend && vercel deploy",
-    "deploy": "turbo deploy"
+    "deploy:frontend": "cd packages/frontend && vercel deploy"
   },
   "devDependencies": {
     "turbo": "^2.0.0"
