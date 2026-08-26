@@ -5,8 +5,8 @@ Description: Autonomous Traffic Monitoring & Incident Management System - Server
 Globals:
   Function:
     Timeout: 30
-    Runtime: python3.11
-    MemorySize: 3008
+    Runtime: python3.13
+    MemorySize: 1024
     Architectures:
       - x86_64
     Environment:
@@ -111,27 +111,21 @@ Resources:
       FunctionName: !Sub "traffic-detect-${Environment}"
       Handler: app.handlers.detect.handler
       CodeUri: .
-      Description: YOLOv8 vehicle detection on incoming frames
-      MemorySize: 3008
-      Timeout: 60
+      Description: Ingest detection results from edge/YOLOv8 processor
+      MemorySize: 512
+      Timeout: 15
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref SnapshotBucket
         - DynamoDBCrudPolicy:
             TableName: !Ref TrafficTable
       Events:
-        S3FrameUpload:
-          Type: S3
+        PostDetection:
+          Type: Api
           Properties:
-            Bucket: !Ref SnapshotBucket
-            Events: s3:ObjectCreated:*
-            Filters:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: frames/
-                  - Name: suffix
-                    Value: .jpg
+            RestApiId: !Ref TrafficApi
+            Path: /api/detect
+            Method: post
 
   AnalyticsFunction:
     Type: AWS::Serverless::Function
@@ -139,8 +133,8 @@ Resources:
       FunctionName: !Sub "traffic-analytics-${Environment}"
       Handler: app.handlers.analytics.handler
       CodeUri: .
-      Description: Process analytics (speed, density, counting, collisions)
-      MemorySize: 1024
+      Description: Process analytics from stored detections
+      MemorySize: 512
       Timeout: 30
       Policies:
         - DynamoDBCrudPolicy:
@@ -148,10 +142,12 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref IncidentTable
       Events:
-        ProcessDetection:
-          Type: Schedule
+        ProcessDetections:
+          Type: Api
           Properties:
-            Schedule: rate(1 minute)
+            RestApiId: !Ref TrafficApi
+            Path: /api/analytics/run
+            Method: post
 
   AlertFunction:
     Type: AWS::Serverless::Function
@@ -167,9 +163,6 @@ Resources:
             TableName: !Ref IncidentTable
         - S3CrudPolicy:
             BucketName: !Ref SnapshotBucket
-      Environment:
-        Variables:
-          WEBHOOK_URLS: ""
 
   TracksFunction:
     Type: AWS::Serverless::Function
