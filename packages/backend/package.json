@@ -1,0 +1,26 @@
+{
+  "name": "@traffic-monitor/backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AWS Lambda backend for Autonomous Traffic Monitoring System",
+  "scripts": {
+    "build": "echo 'Python backend - build via SAM'",
+    "test": "python -m pytest tests/ -v",
+    "lint": "python -m ruff check app/",
+    "deploy": "sam build && sam deploy --guided",
+    "local": "sam local invoke DetectFunction -e events/detect.json",
+    "local-api": "sam local start-api --port 3001"
+  },
+  "dependencies": {
+    "ultralytics": ">=8.0.0",
+    "boxmot": ">=10.0.0",
+    "opencv-python-headless": ">=4.8.0",
+    "numpy": ">=1.24.0",
+    "boto3": ">=1.28.0",
+    "pydantic": ">=2.0.0"
+  },
+  "devDependencies": {
+    "ruff": ">=0.1.0",
+    "pytest": ">=7.0.0"
+  }
+}

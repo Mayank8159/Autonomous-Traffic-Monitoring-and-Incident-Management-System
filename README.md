@@ -2,126 +2,122 @@
 
 # Autonomous Traffic Monitoring & Incident Management System
 
-### Real-Time Deep Learning Pipeline for Intelligent Traffic Surveillance
+### Serverless Monorepo — AWS Lambda + Next.js + YOLOv8
 
-[![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![YOLOv8](https://img.shields.io/badge/YOLOv8-Ultralytics-00D4AA?style=for-the-badge&logo=opencv&logoColor=white)](https://ultralytics.com/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Next.js](https://img.shields.io/badge/Next.js-14+-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
+[![AWS Lambda](https://img.shields.io/badge/AWS_Lambda-Serverless-FF9900?style=for-the-badge&logo=amazon-aws&logoColor=white)](https://aws.amazon.com/lambda/)
+[![YOLOv8](https://img.shields.io/badge/YOLOv8-Object_Detection-00D4AA?style=for-the-badge)](https://ultralytics.com/)
+[![Turborepo](https://img.shields.io/badge/Turborepo-Monorepo-EA35F0?style=for-the-badge)](https://turbo.build/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 ```
- INPUT STREAM ──► YOLOv8 DETECTION ──► ByteTrack ──► ANALYTICS ENGINE ──► ALERTS & API
-   (RTSP/CCTV)       (CNN Inference)    (Multi-Obj)    (Speed/Collision/     (Webhooks/SMS/
-                                      (Tracking)       Density/WrongWay)     Snapshots)
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐     ┌──────────────┐
+│  S3 Upload  │────►│ Lambda:Detect│────►│ Lambda:     │────►│ DynamoDB     │
+│  (Frames)   │     │ (YOLOv8)     │     │ Analytics   │     │ (Tracks +    │
+└─────────────┘     └──────────────┘     └─────────────┘     │  Incidents)  │
+                                                              └──────┬───────┘
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐            │
+│  Vercel     │────►│ Next.js 14   │────►│ API Gateway │────────────┘
+│  (Frontend) │     │ Dashboard    │     │ (REST API)  │
+└─────────────┘     └──────────────┘     └─────────────┘
 ```
 
 </div>
 
 ---
 
-## Architecture Overview
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        SYSTEM ARCHITECTURE                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌──────────┐    ┌─────────────┐    ┌──────────────┐    ┌───────────────┐  │
-│  │  VIDEO   │───►│  YOLOv8 CNN │───►│  ByteTrack   │───►│  Analytics    │  │
-│  │  SOURCE  │    │  Detector   │    │  MOT System  │    │  Engine       │  │
-│  │          │    │  (Backbone) │    │              │    │               │  │
-│  │ RTSP/File│    │  n/s/m/l/x  │    │  Kalman +    │    │ Speed Estim.  │  │
-│  │ /Webcam  │    │  COCO Weights│    │  Hungarian   │    │ Density Map   │  │
-│  └──────────┘    └─────────────┘    └──────────────┘    │ Wrong-Way Det.│  │
-│       │              │                    │               │ Collision Det.│  │
-│       │              │                    │               │ Flow Counter  │  │
-│       │              │                    │               │ Stationary Det│  │
-│       │              │                    │               └───────┬───────┘  │
-│       │              │                    │                       │          │
-│       │              │                    │               ┌───────▼───────┐  │
-│       │              │                    │               │ Alert System  │  │
-│       │              │                    │               │ • Snapshots   │  │
-│       │              │                    │               │ • JSON Logger │  │
-│       │              │                    │               │ • Webhooks    │  │
-│       │              │                    │               │ • SMS (Mock)  │  │
-│       │              │                    │               └───────┬───────┘  │
-│       │              │                    │                       │          │
-│  ┌────▼──────────────▼────────────────────▼───────────────────────▼───────┐  │
-│  │                    Visual Overlay Renderer (OpenCV)                     │  │
-│  │  • Bounding Boxes  • Trajectories  • Speed Vectors  • Density Heatmap  │  │
-│  │  • Counting Line   • HUD Overlay   • Incident Banners                  │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-│                                    │                                         │
-│                            ┌───────▼───────┐                                 │
-│                            │  FastAPI JSON  │                                │
-│                            │  Telemetry     │                                │
-│                            │  Server        │                                │
-│                            │  (Background)  │                                │
-│                            └───────────────┘                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
+                        MONOREPO STRUCTURE
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │                   packages/backend/                        │  │
+│  │                                                            │  │
+│  │  template.yaml    ─── AWS SAM IaC (Lambda + API GW +      │  │
+│  │                         DynamoDB + S3)                     │  │
+│  │  app/                                                   │  │
+│  │    ├── config.py         ─── System configuration         │  │
+│  │    ├── models.py         ─── Pydantic data models         │  │
+│  │    ├── detector.py       ─── YOLOv8 + ByteTrack           │  │
+│  │    ├── analytics.py      ─── Speed / Density / Collision  │  │
+│  │    ├── handlers/                                          │  │
+│  │    │   ├── detect.py     ─── S3 trigger → detection       │  │
+│  │    │   ├── analytics.py  ─── Scheduled analytics run      │  │
+│  │    │   ├── alerts.py     ─── DynamoDB Stream → webhooks   │  │
+│  │    │   └── tracks.py     ─── REST API endpoints           │  │
+│  │    └── utils/            ─── DynamoDB / S3 / response     │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │                  packages/frontend/                        │  │
+│  │                                                            │  │
+│  │  src/                                                     │  │
+│  │    ├── app/                                                │  │
+│  │    │   ├── layout.tsx    ─── Root layout + sidebar         │  │
+│  │    │   ├── page.tsx      ─── Dashboard overview            │  │
+│  │    │   ├── tracking/     ─── Live vehicle tracking         │  │
+│  │    │   ├── incidents/    ─── Incident history              │  │
+│  │    │   ├── analytics/    ─── Speed / density charts        │  │
+│  │    │   └── settings/     ─── Config viewer                 │  │
+│  │    ├── components/      ─── Sidebar, StatCard, etc.        │  │
+│  │    ├── lib/api.ts       ─── API client                     │  │
+│  │    └── types/index.ts   ─── TypeScript interfaces          │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │                 packages/shared/                           │  │
+│  │  index.ts              ─── Shared TypeScript types          │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Core Features
-
-### Detection & Tracking Pipeline
-
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| Object Detection | **YOLOv8** (COCO pretrained) | Vehicle localization & classification |
-| Multi-Object Tracking | **ByteTrack** | Persistent track IDs across frames |
-| Supported Classes | Car, Truck, Bus, Motorcycle, Bicycle | COCO vehicle classes only |
-| Inference Modes | FP16 / GPU / CPU | Configurable device & precision |
-
-### Analytics Engine
-
-| Module | Method | Output |
-|--------|--------|--------|
-| **Speed Estimation** | Perspective transform homography + temporal smoothing | Per-vehicle km/h |
-| **Density Mapping** | Grid-based occupancy ratio (3x3 configurable) | CLEAR / MODERATE / JAMMED |
-| **Vehicle Counting** | Directional counting line intersection | Entry/Exit counts + flow rate |
-| **Stationary Detection** | Speed epsilon threshold over time window | Breakdown hazard alerts |
-| **Wrong-Way Detection** | Movement vector vs. lane vector angle comparison | Directional violation alerts |
-| **Collision Detection** | IoU spike analysis + deceleration + bbox rotation | Multi-signal collision alerts |
-
-### Alert & Notification System
-
-- **Snapshot Export** -- Annotated JPEG frames saved to disk with incident metadata in filename
-- **Structured Logging** -- Daily JSONL incident logs with UTC timestamps
-- **Webhook Dispatch** -- Async HTTP POST to configurable endpoints with semaphore-controlled concurrency
-- **SMS Alerts** -- Mock SMS gateway for high-severity incidents (collision, wrong-way)
-- **Recent Alert Buffer** -- In-memory ring buffer of last 200 alerts for API access
-
-### Live Telemetry API
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /` | Health check |
-| `GET /health` | Service health status |
-| `GET /api/tracks` | All currently tracked vehicles with speed, bbox, class |
-| `GET /api/flow` | Vehicle flow statistics (entry, exit, rate/min) |
-| `GET /api/density` | Grid-based congestion map |
-| `GET /api/incidents` | Recent incident/alert history |
-| `GET /api/status` | System status (active tracks, total incidents, FPS) |
-| `GET /api/config` | Non-sensitive configuration dump |
-
----
-
-## Project Structure
+## Serverless Data Flow
 
 ```
-Autonomous-Traffic-Monitoring-and-Incident-Management-System/
-│
-├── main.py              # Entry-point: stream loop, CLI, orchestration
-├── detector.py          # YOLOv8 + ByteTrack detection & tracking pipeline
-├── analytics.py         # Speed, density, counting, collision, wrong-way analytics
-├── alert_system.py      # Snapshot export, logging, webhooks, SMS dispatch
-├── api.py               # FastAPI telemetry server (background thread)
-├── config.py            # Central dataclass-based configuration system
-├── requirements.txt     # Python dependencies
-└── .gitignore           # Git ignore rules
+     Edge Device / RTSP Stream
+            │
+            ▼
+  ┌──────────────────┐
+  │  Frame Capture   │  Extract frames → upload to S3
+  │  (Python/OpenCV) │  s3://snapshots-dev/frames/*.jpg
+  └────────┬─────────┘
+           │ S3:ObjectCreated:* trigger
+           ▼
+  ┌──────────────────┐
+  │  Lambda:Detect   │  YOLOv8 inference + ByteTrack
+  │  (3008 MB)       │  → Write track data to DynamoDB
+  └────────┬─────────┘
+           │
+           ▼
+  ┌──────────────────┐
+  │ Lambda:Analytics │  Speed estimation, density mapping
+  │ (Scheduled 1min) │  collision detection, wrong-way
+  │                  │  → Write incidents to IncidentTable
+  └────────┬─────────┘
+           │ DynamoDB Stream trigger
+           ▼
+  ┌──────────────────┐
+  │  Lambda:Alerts   │  Webhook dispatch, SMS mock
+  │  (512 MB)        │  Structured logging
+  └──────────────────┘
+           │
+           ▼
+  ┌──────────────────┐     ┌──────────────────┐
+  │  API Gateway     │◄────│  Lambda:Tracks   │  REST API for
+  │  (REST API)      │     │  (512 MB)        │  frontend queries
+  └────────┬─────────┘     └──────────────────┘
+           │
+           ▼
+  ┌──────────────────┐
+  │  Next.js 14      │  Dashboard, tracking, incidents
+  │  (Vercel)        │  analytics, density maps
+  └──────────────────┘
 ```
 
 ---
@@ -130,189 +126,135 @@ Autonomous-Traffic-Monitoring-and-Incident-Management-System/
 
 ### Prerequisites
 
-- Python 3.9 or higher
-- NVIDIA GPU with CUDA support (recommended for real-time inference)
-- RTSP camera stream, video file, or webcam
+- Node.js 18+ and npm
+- Python 3.11+
+- AWS CLI configured (`aws configure`)
+- AWS SAM CLI (`pip install aws-sam-cli`)
+- Vercel CLI (`npm i -g vercel`)
 
 ### Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/Mayank8159/Autonomous-Traffic-Monitoring-and-Incident-Management-System.git
 cd Autonomous-Traffic-Monitoring-and-Incident-Management-System
 
-# Create virtual environment
+# Install monorepo dependencies
+npm install
+
+# Install backend Python dependencies
+cd packages/backend
 python -m venv venv
 source venv/bin/activate  # Linux/macOS
 venv\Scripts\activate     # Windows
-
-# Install dependencies
 pip install -r requirements.txt
+cd ../..
 ```
 
-### Quick Start
+### Deploy Backend (AWS)
 
 ```bash
-# Run with default webcam (source=0)
-python main.py
+cd packages/backend
 
-# Run with RTSP stream
-python main.py --source "rtsp://admin:password@192.168.1.100:554/stream1"
+# Build and deploy with SAM
+sam build
+sam deploy --guided
 
-# Run with video file
-python main.py --source "traffic_sample.mp4"
-
-# Run headless (no display window)
-python main.py --source "rtsp://..." --no-display
+# Note the API Gateway URL from stack outputs
+cd ../..
 ```
 
-### CLI Options
+### Deploy Frontend (Vercel)
 
-```
-python main.py [OPTIONS]
+```bash
+cd packages/frontend
 
-Options:
-  -s, --source TEXT       Video source: RTSP URL, file path, or camera index
-                          [default: 0]
-  -m, --model TEXT        YOLOv8 model name/path  [default: yolov8n.pt]
-  --conf FLOAT            Detection confidence threshold  [default: 0.45]
-  --device TEXT           Inference device (cpu / 0 / 0,1)  [default: 0]
-  --speed-limit FLOAT     Speed limit in km/h  [default: 60.0]
-  --no-display            Run headless without OpenCV window
-```
+# Set environment variable
+echo "NEXT_PUBLIC_API_URL=<YOUR_API_GATEWAY_URL>" > .env.local
 
-### Access the API
+# Deploy to Vercel
+vercel deploy --prod
 
-Once running, the telemetry API is available at:
-
-```
-http://localhost:8000
-http://localhost:8000/docs    # Interactive Swagger UI
+cd ../..
 ```
 
----
+### Local Development
 
-## Configuration
+```bash
+# Start frontend dev server (port 3000)
+npm run dev
 
-All system parameters are defined in `config.py` via typed dataclasses. Key configuration groups:
-
-| Config Group | Key Parameters |
-|-------------|----------------|
-| **StreamConfig** | source, frame_width (1280), frame_height (720), buffer_size |
-| **DetectionConfig** | model_name, confidence_threshold (0.45), iou_threshold (0.5), half_precision |
-| **TrackerConfig** | track_thresh (0.5), track_buffer (60), match_thresh (0.8), min_hits (3) |
-| **SpeedConfig** | calibration_points, pixels_to_meters_ratio, speed_limit_kmh (60), smoothing_window |
-| **StationaryConfig** | stationary_threshold_sec (5.0), stationary_speed_epsilon (2.0) |
-| **WrongWayConfig** | lane_vectors, angle_tolerance_deg (90), min_track_length (10) |
-| **CollisionConfig** | iou_spike_threshold (0.3), deceleration_threshold_kmh (30), bbox_orientation_shift_deg (30) |
-| **VisualizationConfig** | show_bounding_boxes, show_trajectories, show_speed_vectors, show_density_heatmap |
-
----
-
-## Visualization
-
-The renderer produces a real-time annotated overlay including:
-
-- **Bounding Boxes** -- Color-coded by vehicle class (car=blue, truck=orange, bus=magenta, motorcycle=yellow, bicycle=green)
-- **Trajectory Trails** -- Fading line segments showing recent movement history
-- **Speed Vectors** -- Arrowed lines indicating instantaneous velocity direction
-- **Density Heatmap** -- Semi-transparent grid overlay (green=clear, orange=moderate, red=jammed)
-- **Counting Line** -- Yellow line with label for vehicle flow measurement
-- **HUD Panel** -- FPS, frame count, active tracks, entry/exit counts, flow rate
-- **Incident Banners** -- Red alert banners for detected incidents
-
----
-
-## Neural Network Pipeline Details
-
-```
-                          YOLOv8 INFERENCE PIPELINE
-                    ┌─────────────────────────────────┐
-                    │                                 │
-  Input Frame       │   ┌─────────┐                  │
-  (1280x720)  ─────►│   │ Backbone │  CSPDarknet      │
-                    │   │  (CSP)  │  Feature Extractor│
-                    │   └────┬────┘                  │
-                    │        │                        │
-                    │   ┌────▼────┐                  │
-                    │   │  Neck   │  PANet + FPN      │
-                    │   │ (PANet) │  Multi-Scale       │
-                    │   └────┬────┘  Feature Fusion   │
-                    │        │                        │
-                    │   ┌────▼────┐                  │
-                    │   │  Head   │  Anchor-Free       │
-                    │   │ (Detect)│  Detection Head    │
-                    │   └────┬────┘                  │
-                    │        │                        │
-                    │   ┌────▼────┐                  │
-                    │   │   NMS   │  Non-Maximum       │
-                    │   │ + Filter│  Suppression       │
-                    │   └────┬────┘  (IoU=0.5)        │
-                    │        │                        │
-                    └────────│─────────────────────────┘
-                             │
-                    Detections: xyxy + conf + class
-                             │
-                    ┌────────▼──────────────────────┐
-                    │        ByteTrack               │
-                    │   ┌──────────┐                │
-                    │   │ Kalman   │  State           │
-                    │   │ Filter   │  Prediction      │
-                    │   └────┬─────┘                │
-                    │        │                       │
-                    │   ┌────▼─────┐                │
-                    │   │Hungarian │  Assignment      │
-                    │   │ Matching │  Algorithm       │
-                    │   └────┬─────┘                │
-                    │        │                       │
-                    │   ┌────▼─────┐                │
-                    │   │ Track    │  ID              │
-                    │   │ Management│ Persistence     │
-                    │   └──────────┘                │
-                    └───────────────────────────────┘
-                             │
-                    Tracked: (track_id, class, bbox, conf)
-                             │
-                    ┌────────▼──────────────────────┐
-                    │      ANALYTICS ENGINE          │
-                    │                                │
-                    │  Speed ──► Perspective ──► km/h│
-                    │  Density ──► Grid ──► Congest. │
-                    │  Counter ──► Line Cross ──► Flow│
-                    │  Stationary ──► Duration ──► Hz│
-                    │  WrongWay ──► Vector Angle ──► │
-                    │  Collision ──► IoU Spike ──►   │
-                    └───────────────────────────────┘
+# Start backend local API (port 3001)
+cd packages/backend
+sam local start-api --port 3001
 ```
 
 ---
 
-## Technology Stack
+## API Endpoints
 
-| Category | Technology | Version |
-|----------|-----------|---------|
-| Language | Python | 3.9+ |
-| Deep Learning | PyTorch | 2.0+ |
-| Object Detection | Ultralytics YOLOv8 | 8.0+ |
-| Multi-Object Tracking | ByteTrack (boxmot) | 10.0+ |
-| Computer Vision | OpenCV | 4.8+ |
-| Array Computing | NumPy | 1.24+ |
-| Web Framework | FastAPI | 0.100+ |
-| ASGI Server | Uvicorn | 0.23+ |
-| Async HTTP | aiohttp | 3.9+ |
-| Data Validation | Pydantic | 2.0+ |
-| Geometry | Shapely | 2.0+ |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/tracks` | All currently tracked vehicles |
+| `GET` | `/api/flow` | Vehicle flow statistics |
+| `GET` | `/api/density` | Grid-based congestion map |
+| `GET` | `/api/incidents` | Recent incident history |
+| `GET` | `/api/status` | System status |
+| `GET` | `/api/config` | Configuration dump |
+
+---
+
+## Frontend Pages
+
+| Route | Page | Description |
+|-------|------|-------------|
+| `/` | Dashboard | Real-time overview with stats, density map, alerts |
+| `/tracking` | Live Tracking | Vehicle cards with speed, position, status |
+| `/incidents` | Incidents | Incident history with type breakdowns |
+| `/analytics` | Analytics | Speed distribution, vehicle classes, density grid |
+| `/settings` | Settings | System configuration viewer |
+
+---
+
+## AWS Resources
+
+| Resource | Type | Purpose |
+|----------|------|---------|
+| `DetectFunction` | Lambda (3008 MB) | YOLOv8 inference on uploaded frames |
+| `AnalyticsFunction` | Lambda (1024 MB) | Speed, density, collision analytics |
+| `AlertFunction` | Lambda (512 MB) | Webhook/SMS alert dispatch |
+| `TracksFunction` | Lambda (512 MB) | REST API for telemetry data |
+| `TrafficTable` | DynamoDB | Vehicle track data with GSIs |
+| `IncidentTable` | DynamoDB | Incident records with GSIs |
+| `SnapshotBucket` | S3 | Frame snapshots (30-day lifecycle) |
+| `TrafficApi` | API Gateway | REST API with CORS |
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Monorepo | Turborepo + npm workspaces |
+| Backend | Python 3.11, AWS Lambda, SAM |
+| Detection | YOLOv8 (Ultralytics), ByteTrack (boxmot) |
+| Database | Amazon DynamoDB (on-demand) |
+| Storage | Amazon S3 |
+| API | API Gateway REST + Lambda |
+| Frontend | Next.js 14, React 18, TypeScript |
+| Styling | Tailwind CSS (dark theme) |
+| Charts | Recharts |
+| Deploy | AWS SAM (backend), Vercel (frontend) |
 
 ---
 
 ## License
 
-This project is licensed under the MIT License -- see the [LICENSE](LICENSE) file for details.
+MIT License -- see [LICENSE](LICENSE) for details.
 
 ---
 
 <div align="center">
 
-**Built for intelligent transportation systems research and deployment.**
+**Built with serverless architecture for scalable, cost-efficient traffic surveillance.**
 
 </div>

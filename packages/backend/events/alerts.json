@@ -1,0 +1,17 @@
+{
+  "Records": [
+    {
+      "eventName": "INSERT",
+      "dynamodb": {
+        "NewImage": {
+          "incident_id": { "S": "INC-test123" },
+          "timestamp": { "N": "1693056000000" },
+          "incident_type": { "S": "collision" },
+          "track_id": { "N": "42" },
+          "location_id": { "S": "intersection_01" },
+          "metadata": { "S": "{\"iou\": 0.35, \"track_b\": 7}" }
+        }
+      }
+    }
+  ]
+}

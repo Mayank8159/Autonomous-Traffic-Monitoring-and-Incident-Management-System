@@ -1,0 +1,238 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Autonomous Traffic Monitoring & Incident Management System - Serverless Backend
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: python3.11
+    MemorySize: 3008
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        DYNAMODB_TABLE_NAME: !Ref TrafficTable
+        SNAPSHOT_BUCKET: !Ref SnapshotBucket
+        INCIDENT_TABLE_NAME: !Ref IncidentTable
+        ENVIRONMENT: !Ref Environment
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+Resources:
+  # ─── API Gateway ────────────────────────────────────────────────────────
+  TrafficApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowOrigin: "'*'"
+      TracingEnabled: true
+
+  # ─── DynamoDB Tables ───────────────────────────────────────────────────
+  TrafficTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "traffic-monitor-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: timestamp-index
+          KeySchema:
+            - AttributeName: pk
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  IncidentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "traffic-incidents-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: incident_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+        - AttributeName: incident_type
+          AttributeType: S
+      KeySchema:
+        - AttributeName: incident_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: type-timestamp-index
+          KeySchema:
+            - AttributeName: incident_type
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  # ─── S3 Bucket ─────────────────────────────────────────────────────────
+  SnapshotBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "traffic-snapshots-${Environment}-${AWS::AccountId}"
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireSnapshots
+            Status: Enabled
+            ExpirationInDays: 30
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # ─── Lambda Functions ──────────────────────────────────────────────────
+  DetectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "traffic-detect-${Environment}"
+      Handler: app.handlers.detect.handler
+      CodeUri: .
+      Description: YOLOv8 vehicle detection on incoming frames
+      MemorySize: 3008
+      Timeout: 60
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref SnapshotBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TrafficTable
+      Events:
+        S3FrameUpload:
+          Type: S3
+          Properties:
+            Bucket: !Ref SnapshotBucket
+            Events: s3:ObjectCreated:*
+            Filters:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: frames/
+                  - Name: suffix
+                    Value: .jpg
+
+  AnalyticsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "traffic-analytics-${Environment}"
+      Handler: app.handlers.analytics.handler
+      CodeUri: .
+      Description: Process analytics (speed, density, counting, collisions)
+      MemorySize: 1024
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TrafficTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IncidentTable
+      Events:
+        ProcessDetection:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+
+  AlertFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "traffic-alerts-${Environment}"
+      Handler: app.handlers.alerts.handler
+      CodeUri: .
+      Description: Dispatch alerts via webhooks and log incidents
+      MemorySize: 512
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref IncidentTable
+        - S3CrudPolicy:
+            BucketName: !Ref SnapshotBucket
+      Environment:
+        Variables:
+          WEBHOOK_URLS: ""
+
+  TracksFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "traffic-tracks-${Environment}"
+      Handler: app.handlers.tracks.handler
+      CodeUri: .
+      Description: API endpoint for live vehicle tracking data
+      MemorySize: 512
+      Timeout: 10
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref TrafficTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref IncidentTable
+      Events:
+        GetTracks:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TrafficApi
+            Path: /api/tracks
+            Method: get
+        GetFlow:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TrafficApi
+            Path: /api/flow
+            Method: get
+        GetDensity:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TrafficApi
+            Path: /api/density
+            Method: get
+        GetIncidents:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TrafficApi
+            Path: /api/incidents
+            Method: get
+        GetStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TrafficApi
+            Path: /api/status
+            Method: get
+        GetConfig:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TrafficApi
+            Path: /api/config
+            Method: get
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${TrafficApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+  SnapshotBucketName:
+    Description: S3 bucket for frame snapshots
+    Value: !Ref SnapshotBucket
+  TrafficTableName:
+    Description: DynamoDB table for vehicle tracks
+    Value: !Ref TrafficTable
+  IncidentTableName:
+    Description: DynamoDB table for incidents
+    Value: !Ref IncidentTable

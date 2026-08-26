@@ -1,0 +1,10 @@
+{
+  "incident_type": "collision",
+  "track_id": 42,
+  "location_id": "intersection_01",
+  "metadata": {
+    "iou": 0.35,
+    "track_b": 7,
+    "speed_kmh": 45.2
+  }
+}

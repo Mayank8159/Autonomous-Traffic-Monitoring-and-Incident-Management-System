@@ -1,11 +1,49 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
-.env
+*.pyd
+.Python
 venv/
 .venv/
 *.egg-info/
 dist/
 build/
+.eggs/
+
+# Node
+node_modules/
+.next/
+out/
+.vercel/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
 .DS_Store
 Thumbs.db
+
+# AWS
+.aws-sam/
+samconfig.toml
+*.zip
+
+# Logs
+logs/
+*.log
+snapshots/
+
+# Temporary
+tmp/
+temp/
+.cache/
