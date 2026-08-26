@@ -12,6 +12,7 @@ export default async function DashboardPage() {
   let density: DensityCell[] = Array.from({ length: 9 }, (_, i) => ({ row: Math.floor(i / 3), col: i % 3, level: "clear" as const }));
   let incidents: IncidentInfo[] = [];
   let status: SystemStatus = { active_tracks: 0, total_incidents: 0, last_update: Date.now() };
+  let backendOk = false;
 
   try {
     [tracks, flow, density, incidents, status] = await Promise.all([
@@ -21,8 +22,9 @@ export default async function DashboardPage() {
       getIncidents(5),
       getStatus(),
     ]);
+    backendOk = true;
   } catch {
-    // use defaults
+    // use defaults, backendOk stays false
   }
 
   return (
@@ -32,9 +34,11 @@ export default async function DashboardPage() {
           <h1 className="text-2xl font-bold">Dashboard</h1>
           <p className="text-sm text-white/40 mt-1">Real-time traffic monitoring overview</p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-white/30">
-          <div className="w-2 h-2 rounded-full bg-traffic-clear animate-pulse" />
-          Live
+        <div className="flex items-center gap-3 text-xs text-white/40">
+          <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
+            <div className={`w-2 h-2 rounded-full ${backendOk ? "bg-green-400 animate-pulse" : "bg-red-400"}`} />
+            Backend {backendOk ? "Live" : "Offline"}
+          </div>
         </div>
       </div>
 
