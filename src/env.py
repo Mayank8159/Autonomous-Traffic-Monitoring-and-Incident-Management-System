@@ -1,5 +1,6 @@
 # src/env.py
 import numpy as np
+import warnings
 
 try:
     import traci
@@ -22,14 +23,20 @@ class TrafficEnv:
         – 1 = give Green to East‑West traffic
     """
 
-    def __init__(self, green_duration=5, red_duration=5, max_queue=30.0, sumo=False):
+    def __init__(self, green_duration=5, red_duration=5, max_queue=30.0,
+                 sumo=False, max_steps=200):
         self.green_duration = green_duration
         self.red_duration = red_duration
         self.max_queue = max_queue
         self.sumo = sumo
+        self.max_steps = max_steps
 
         if sumo and not HAS_SUMO:
-            raise RuntimeError("SUMO is not available. Install sumo‑python or run without sumo=True.")
+            warnings.warn(
+                "SUMO is not available; using the lightweight traffic simulation.",
+                RuntimeWarning,
+            )
+            self.sumo = False
 
         self.reset()
 
@@ -84,16 +91,17 @@ class TrafficEnv:
             depart = np.array([0, discharge_rate, discharge_rate, 0], dtype=np.float32)
 
         self.queue = np.clip(self.queue + arrival - depart, 0, self.max_queue)
+        departed = float(np.minimum(self.queue + depart, depart).sum())
         self.total_vehicles = np.clip(np.sum(self.queue) + np.random.randint(0, 5), 0, 200)
 
         avg_queue = np.mean(self.queue)
         reward = -avg_queue
 
         self.step_cnt += 1
-        done = self.step_cnt >= 200   # longer horizon by default
+        done = self.step_cnt >= self.max_steps
 
         next_state = self._get_state()
-        info = {"queues": self.queue.copy(), "phase": self.phase}
+        info = {"queues": self.queue.copy(), "phase": self.phase, "departed": departed}
         return next_state, reward, done, info
 
     # -----------------------------------------------------------------

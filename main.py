@@ -1,9 +1,12 @@
 # main.py
 import argparse
+import json
 import numpy as np
 import torch
 import sys
 import os
+import webbrowser
+import subprocess
 
 # Ensure the src package is importable
 sys.path.insert(0, os.path.dirname(__file__))
@@ -31,13 +34,14 @@ def parse_args():
     parser.add_argument("--num-intersections", type=int, default=1,
                         help="How many intersections to simulate (for coordination demo)")
     parser.add_argument("--sumo", action="store_true", help="Use real SUMO if available (fallback to lite)")
-    parser.add_argument("--gui", action="store_true", help="Launch pygame visualisation")
+    parser.add_argument("--gui", action="store_true", help="Open the web visualizer after exporting rollout data")
     return parser.parse_args()
 
 
-def make_env(i=0, sumo=False):
+def make_env(i=0, sumo=False, max_steps=200):
     """Create an environment instance; for multi‑intersection we just instantiate several."""
-    return TrafficEnv(green_duration=5, red_duration=5, max_queue=30.0, sumo=sumo)
+    return TrafficEnv(green_duration=5, red_duration=5, max_queue=30.0,
+                      sumo=sumo, max_steps=max_steps)
 
 
 def run_rl_loop(args):
@@ -45,7 +49,8 @@ def run_rl_loop(args):
     print(f"Using device {device}")
 
     # Create environments – one per intersection
-    envs = [make_env(i, sumo=args.sumo) for i in range(args.num_intersections)]
+    envs = [make_env(i, sumo=args.sumo, max_steps=args.max_steps)
+            for i in range(args.num_intersections)]
 
     # Initialise policy model (MLP for RL; cell argument only affects the evaluate step)
     input_dim = 7
@@ -62,18 +67,12 @@ def run_rl_loop(args):
                                  device=device)
     elif args.algo == "dqn":
         print(f"Training with DQN for {args.epochs} episodes...")
-        # DQN expects a Q‑network; we reuse the MLP structure but train as Q‑function
-        # For simplicity we just call the dqn_train helper that builds its own Q‑net.
-        # Here we just illustrate; a full DQN would need experience replay.
-        from src.trainer import dqn_train as dqn_train_func
-        # dqn_train_func expects a model (here MLP) and environment.
-        # We'll wrap our policy into a Q‑Network briefly:
-        # Actually we'll just train a separate Q‑net inside dqn_train.
-        # To keep things simple, we fall back to REINFORCE message.
-        print("DQN training not fully wired in this demo; switching to REINFORCE.")
-        policy = reinforce_train(policy, envs[0], n_episodes=args.epochs,
-                                 max_steps=args.max_steps, lr=args.lr, gamma=args.gamma,
-                                 device=device)
+        from src.trainer import QNetwork
+        policy = dqn_train(QNetwork(input_dim=input_dim,
+                                    hidden_dims=[args.hidden_dim, args.hidden_dim // 2]),
+                           envs[0], n_episodes=args.epochs,
+                           max_steps=args.max_steps, lr=args.lr, gamma=args.gamma,
+                           device=device)
 
     # -----------------------------------------------------------------
     # Evaluation against fixed‑time baseline
@@ -81,7 +80,8 @@ def run_rl_loop(args):
     # Set model to eval mode so BatchNorm runs with running stats (batch size 1)
     policy.eval()
     # Ensure baseline envs are fresh
-    baseline_envs = [make_env(i, sumo=False) for i in range(args.num_intersections)]
+    baseline_envs = [make_env(i, sumo=False, max_steps=args.max_steps)
+                     for i in range(args.num_intersections)]
 
     # Run learned controller on each intersection and aggregate metrics
     all_mlp = []
@@ -108,51 +108,63 @@ def run_rl_loop(args):
     print("\nComparison plot saved to results/rl_comparison.png")
 
     # -----------------------------------------------------------------
-    # Optional GUI (pygame) – visualise the last episode of the first intersection
+    # Export rollout data for web-based visualizer
     # -----------------------------------------------------------------
-    if args.gui:
-        print("Launching pygame visualiser (simple UI).")
-        # Import here to avoid requiring pygame at import time
-        try:
-            import pygame
-            from src.gui import draw_intersection
-        except ImportError:
-            # If gui module missing, create a minimal stub
-            print("pygame not installed; skipping GUI.")
-            return
+    # Reset one env and run a short rollout with the trained policy,
+    # saving state, action, reward, probs, and phase at each step
+    # so the web visualizer (web_visualizer/visualizer.html) can display it.
+    os.makedirs("results", exist_ok=True)
 
-        # Reset one env and run a short rollout with the trained policy
-        env = envs[0]
-        state = env.reset()
-        running = True
-        clock = pygame.time.Clock()
-        step = 0
-        while running:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
+    env = envs[0]
+    state = env.reset()
+    rollout = []
 
-            with torch.no_grad():
-                probs = policy(torch.tensor(state, dtype=torch.float32).unsqueeze(0))
-                action = torch.argmax(probs, dim=1).item()
+    policy.eval()  # Ensure BatchNorm uses running stats (helps with batch size 1)
+    with torch.no_grad():
+        for t in range(args.max_steps):
+            state_t = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+            output = policy(state_t)
+            probs = output if torch.all(output >= 0) and torch.allclose(
+                output.sum(dim=1), torch.ones(1), atol=1e-4
+            ) else torch.softmax(output, dim=1)
+            probs_np = probs.squeeze().cpu().numpy()
+            action = int(torch.argmax(probs, dim=1).item())
 
             next_state, reward, done, info = env.step(action)
+
+            rollout.append({
+                "step": t,
+                "state": state_t.squeeze().cpu().numpy().tolist(),
+                "action": action,
+                "probs": probs_np.tolist(),
+                "phase": int(env.phase),
+                "queues": info["queues"].tolist(),
+                "reward": float(reward),
+            })
+
             state = next_state
-            step += 1
+            if done:
+                break
 
-            # Draw everything
-            screen = pygame.display.set_mode((800, 600))
-            pygame.display.set_caption("ATMS – Learned Policy")
-            draw_intersection(screen, env, probs.squeeze().cpu().numpy(), action)
-            pygame.display.flip()
-            clock.tick(30)
+    # Save rollout data for the web visualizer
+    with open("results/rl_rollout.json", "w") as f:
+        json.dump(rollout, f, indent=2)
+    with open("web_visualizer/rollout_data.js", "w") as f:
+        f.write("window.ATMS_ROLLOUT = ")
+        json.dump(rollout, f)
+        f.write(";\n")
 
-            if done or step >= args.max_steps:
-                # reset for continuous demo
-                state = env.reset()
-                step = 0
-
-        pygame.quit()
+    print(f"\nRollout data saved to results/rl_rollout.json ({len(rollout)} steps).")
+    print("Open web_visualizer/visualizer.html in a browser to view the visualization.")
+    if args.gui:
+        project_dir = os.path.abspath(os.path.dirname(__file__))
+        subprocess.Popen(
+            [sys.executable, "-m", "http.server", "8765", "--bind", "127.0.0.1"],
+            cwd=project_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        webbrowser.open("http://127.0.0.1:8765/web_visualizer/visualizer.html")
 
 
 def main():
@@ -168,9 +180,13 @@ def main():
         dl = generate_synthetic_data(env, n_samples=3000, seq_len=1)
         model = MLPModel(input_dim=7, hidden_dims=[64, 32], dropout=0.3)
         model = train_model(model, dl, epochs=15, lr=1e-3)
-        # quick evaluation against baseline
+        model.eval()
+        learned = run_controller(TrafficEnv(green_duration=5, red_duration=5),
+                                 model, n_episodes=5, mode="mlp")
         base = run_baseline(TrafficEnv(green_duration=5, red_duration=5), n_episodes=5)
-        print("Supervised model trained. Baseline:", base)
+        plot_comparison(learned, base, save_path="results/supervised_comparison.png")
+        print("Supervised metrics:", learned)
+        print("Baseline metrics:", base)
 
 
 if __name__ == "__main__":

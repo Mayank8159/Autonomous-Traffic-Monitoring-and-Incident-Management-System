@@ -4,7 +4,43 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import copy
 from torch.utils.data import DataLoader, TensorDataset
+from torch.nn import init
+
+
+def generate_synthetic_data(env, n_samples=3000, seq_len=1):
+    """Generate states and heuristic phase labels for supervised pre-training."""
+    states = []
+    labels = []
+    for _ in range(n_samples):
+        state = env.reset()
+        states.append(state)
+        labels.append(int(state[0] + state[3] < state[1] + state[2]))
+    x = torch.tensor(np.asarray(states), dtype=torch.float32)
+    if seq_len > 1:
+        x = x.unsqueeze(1).repeat(1, seq_len, 1)
+    dataset = TensorDataset(x, torch.tensor(labels, dtype=torch.long))
+    return DataLoader(dataset, batch_size=min(64, n_samples), shuffle=True)
+
+
+def train_model(model, dataloader, epochs=15, lr=1e-3, device="cpu"):
+    """Train a classifier on the synthetic heuristic labels."""
+    model.to(device)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.CrossEntropyLoss()
+    model.train()
+    for _ in range(epochs):
+        for states, labels in dataloader:
+            states, labels = states.to(device), labels.to(device)
+            if states.ndim == 3:
+                states = states[:, -1, :]
+            probs = model(states)
+            loss = criterion(torch.log(probs.clamp_min(1e-8)), labels)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+    return model
 
 # -----------------------------------------------------------------
 # REINFORCE (policy‑gradient) training loop
@@ -72,8 +108,7 @@ def reinforce_train(model, env, n_episodes=200, max_steps=200,
         # ---------- loss ----------
         # policy gradient = - log_prob * advantage (here advantage = return - baseline)
         # we use the mean return as a simple baseline
-        baseline = returns.mean()
-        loss = -torch.stack(log_probs).mul(returns - baseline).mean()
+        loss = -torch.stack(log_probs).mul(returns).mean()
         loss -= 0.01 * torch.stack(entropies).mean()   # entropy bonus
 
         optimizer.zero_grad()
@@ -102,7 +137,6 @@ class QNetwork(nn.Module):
             layers.append(nn.Linear(prev, h))
             init.kaiming_uniform_(layers[-1].weight, nonlinearity='relu')
             layers.append(nn.ReLU(inplace=True))
-            layers.append(nn.BatchNorm1d(h))
             layers.append(nn.Dropout(dropout))
             prev = h
         layers.append(nn.Linear(prev, 2))  # Q-values for 2 actions
@@ -123,9 +157,8 @@ def dqn_train(model, env, n_episodes=300, max_steps=200,
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
 
-    q = QNetwork(input_dim=7, hidden_dims=[64, 32], dropout=0.3).to(device)  # separate Q‑net
-    target_q = QNetwork(input_dim=7, hidden_dims=[64, 32], dropout=0.3).to(device)
-    target_q.load_state_dict(q.state_dict())
+    q = model.to(device)
+    target_q = copy.deepcopy(q).to(device)
 
     epsilon = epsilon_start
 

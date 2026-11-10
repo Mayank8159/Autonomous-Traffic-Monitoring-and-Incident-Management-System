@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traffic Signal Policy Visualizer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+
+        .controls {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+
+        .control-row {
+            margin-bottom: 10px;
+        }
+
+        .control-row label {
+            margin-right: 15px;
+        }
+
+        canvas {
+            background: white;
+            border: 1px solid #ddd;
+            display: block;
+            margin: 0 auto;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        #status {
+            text-align: center;
+            margin-top: 10px;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Traffic Signal Policy Visualizer</h1>
+
+    <div class="controls">
+        <div class="control-row">
+            <label>Speed (ms): <input type="number" id="speed" value="50" min="1" max="1000"></label>
+            <label>Pause (ms): <input type="number" id="pause" value="100" min="0" max="5000"></label>
+        </div>
+        <div class="control-row">
+            <button id="loadBtn" onclick="loadData()">Load Latest Data</button>
+            <button id="resetBtn" onclick="resetVisualization()">Reset</button>
+        </div>
+    </div>
+
+    <canvas id="canvas" width="800" height="600"></canvas>
+    <div id="status">Loading data...</div>
+    <script src="rollout_data.js"></script>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const speedInput = document.getElementById('speed');
+        const pauseInput = document.getElementById('pause');
+        const statusDiv = document.getElementById('status');
+
+        let animationId = null;
+        let currentData = null;
+        let currentStep = 0;
+        let speed = 50;
+        let pause = 100;
+
+        // Canvas setup - same dimensions as the Pygame visualizer
+        const CENTER_X = 400;
+        const CENTER_Y = 300;
+        const ROAD_WIDTH = 100;
+
+        function resizeCanvas() {
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Draw roads (same as Pygame version)
+        function drawRoads() {
+            ctx.strokeStyle = '#888888';
+            ctx.lineWidth = ROAD_WIDTH;
+
+            // North-south road (vertical line)
+            ctx.beginPath();
+            ctx.moveTo(CENTER_X, 100);
+            ctx.lineTo(CENTER_X, 500);
+            ctx.stroke();
+
+            // East-west road (horizontal line)
+            ctx.beginPath();
+            ctx.moveTo(100, CENTER_Y);
+            ctx.lineTo(700, CENTER_Y);
+            ctx.stroke();
+        }
+
+        // Draw queue bars (same logic as Pygame version)
+        function drawQueues(queueData) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height); // clear
+
+            drawRoads();
+
+            // Max bar height
+            const maxBar = 50;
+
+            // Lane positions (same as Pygame gui.py)
+            const lanePositions = [
+                { x: CENTER_X - ROAD_WIDTH / 2, y: 200, idx: 0, label: 'N-in' },   // N-in (north top)
+                { x: CENTER_X + ROAD_WIDTH / 2, y: 400, idx: 1, label: 'E-in' },   // E-in (east right)
+                { x: CENTER_X - ROAD_WIDTH / 2, y: 400, idx: 2, label: 'N-out' },  // N-out (south bottom)
+                { x: CENTER_X, y: CENTER_Y - ROAD_WIDTH / 2, idx: 3, label: 'W-in' }, // W-in (west left) - placeholder
+            ];
+
+            // Scale queue length to visible bar height
+            for (const lane of lanePositions) {
+                const queueLen = queueData ? parseFloat(queueData[lane.idx] || 0) : 0;
+                const barH = Math.max(0, Math.min(maxBar, (queueLen / 30) * maxBar));
+                const color = barH > 0 ? '#00ff00' : '#cccccc';
+
+                // Draw bar
+                const barWidth = ROAD_WIDTH / 2;
+                ctx.fillStyle = color;
+                ctx.fillRect(lane.x - barWidth / 2, lane.y - barH, barWidth, barH);
+
+                // Label
+                ctx.fillStyle = '#000000';
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(lane.label, lane.x, lane.y - barH - 10);
+            }
+        }
+
+        // Draw phase indicator (same as Pygame version)
+        function drawPhase(phase) {
+            // phase: 0 -> NS green, 1 -> EW green
+            ctx.fillStyle = phase === 0 ? '#00ff00' : '#ff0000';
+            ctx.beginPath();
+            ctx.arc(650, 50, 20, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#000000';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Phase: ${phase === 0 ? 'NS Green' : 'EW Green'}`, 680, 55);
+        }
+
+        // Draw probabilities
+        function drawProbs(probs) {
+            if (!probs) return;
+
+            ctx.fillStyle = '#000000';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`P(NS): ${parseFloat(probs[0]).toFixed(2)}  P(EW): ${parseFloat(probs[1]).toFixed(2)}`, 20, 30);
+        }
+
+        // Draw action
+        function drawAction(action) {
+            ctx.fillStyle = '#000000';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Action: ${action === 0 ? 'NS' : 'EW'} green`, 20, 50);
+        }
+
+        // Load data from the JSON file generated by Python
+        async function loadData() {
+            try {
+                if (Array.isArray(window.ATMS_ROLLOUT) && window.ATMS_ROLLOUT.length) {
+                    currentData = window.ATMS_ROLLOUT;
+                    statusDiv.textContent = `Loaded local data: ${currentData.length} steps`;
+                    statusDiv.style.color = 'green';
+                    currentStep = 0;
+                    startAnimation();
+                    return;
+                }
+                // Try to fetch the rollout data generated by main.py
+                const response = await fetch('../results/rl_rollout.json');
+                if (!response.ok) {
+                    statusDiv.textContent = 'No data found. Run training first with --mode rl.';
+                    statusDiv.style.color = 'red';
+                    statusDiv.innerHTML += '<br/><i>Expected at: ../results/rl_rollout.json</i>';
+                    return;
+                }
+                currentData = await response.json();
+                currentData = Array.isArray(currentData) ? currentData : currentData.steps;
+                if (!Array.isArray(currentData) || !currentData.length) {
+                    throw new Error('The rollout file contains no steps.');
+                }
+                statusDiv.textContent = `Loaded data: ${currentData.length} steps`;
+                statusDiv.style.color = 'green';
+                currentStep = 0;
+                startAnimation();
+            } catch (err) {
+                if (Array.isArray(window.ATMS_ROLLOUT)) {
+                    currentData = window.ATMS_ROLLOUT;
+                    statusDiv.textContent = `Loaded local data: ${currentData.length} steps`;
+                    statusDiv.style.color = 'green';
+                    currentStep = 0;
+                    startAnimation();
+                } else {
+                    statusDiv.textContent = 'Error loading data: ' + err.message;
+                    statusDiv.style.color = 'red';
+                }
+            }
+        }
+
+        function resetVisualization() {
+            currentStep = 0;
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            statusDiv.textContent = 'Reset. Click "Load Latest Data" to load new data.';
+            statusDiv.style.color = '#666';
+        }
+
+        function startAnimation() {
+            if (!currentData) return;
+            animateStep();
+        }
+
+        function animateStep() {
+            if (!currentData || currentStep >= currentData.length) {
+                statusDiv.textContent = 'Simulation complete.';
+                statusDiv.style.color = 'green';
+                return;
+            }
+
+            const stepData = currentData[currentStep];
+
+            // Clear and redraw
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawRoads();
+            drawQueues(stepData.queues);
+            drawPhase(stepData.phase);
+            drawProbs(stepData.probs);
+            drawAction(stepData.action);
+
+            currentStep++;
+            animationId = requestAnimationFrame(animateStep);
+        }
+
+        // Handle control inputs
+        speedInput.addEventListener('input', (e) => {
+            speed = parseInt(e.target.value);
+        });
+
+        pauseInput.addEventListener('input', (e) => {
+            pause = parseInt(e.target.value);
+        });
+
+        // Initialize
+        resetVisualization();
+        loadData();
+    </script>
+</body>
+
+</html>

@@ -16,16 +16,15 @@ def run_controller(env, model, n_episodes=5, mode="mlp", rl=False):
         argmax actions (useful for baseline or pretrained policy).
     Returns a dict with average waiting time, queue reduction, throughput.
     """
-    env.reset()
     total_wait = 0.0
     total_queues = 0.0
     total_throughput = 0.0
     steps = 0
-
-    init_queue = np.mean(env.queue) if hasattr(env, "queue") else 5.0
+    initial_queues = []
 
     for ep in range(n_episodes):
-        state = env._get_state()
+        state = env.reset()
+        initial_queues.append(np.mean(env.queue))
         done = False
         ep_wait = 0.0
         ep_queues = 0.0
@@ -36,14 +35,20 @@ def run_controller(env, model, n_episodes=5, mode="mlp", rl=False):
             if rl:
                 with torch.no_grad():
                     state_t = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
-                    probs = model(state_t)          # Softmax output
+                    output = model(state_t)
+                    probs = output if torch.all(output >= 0) and torch.allclose(
+                        output.sum(dim=1), torch.ones(1), atol=1e-4
+                    ) else torch.softmax(output, dim=1)
                     m = torch.distributions.Categorical(probs)
                     action = m.sample().item()
             else:
                 # deterministic: pick phase with higher probability (or argmax)
                 with torch.no_grad():
                     state_t = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
-                    probs = model(state_t)
+                    output = model(state_t)
+                    probs = output if torch.all(output >= 0) and torch.allclose(
+                        output.sum(dim=1), torch.ones(1), atol=1e-4
+                    ) else torch.softmax(output, dim=1)
                     action = torch.argmax(probs, dim=1).item()
 
             # ----- take step in env -----
@@ -54,15 +59,18 @@ def run_controller(env, model, n_episodes=5, mode="mlp", rl=False):
 
             total_wait += -reward
             total_queues += np.sum(info["queues"])
+            total_throughput += info.get("departed", 0.0)
             steps += 1
 
             state = next_state
 
     avg_wait = total_wait / max(1, steps)
     avg_queue = total_queues / max(1, steps)
-    throughput = (total_throughput / max(1, steps)) * 60 if False else (avg_queue / max(1, steps)) * 60  # placeholder
+    throughput = (total_throughput / max(1, steps)) * 60
 
-    queue_reduction = (init_queue - avg_queue) / max(1e-3, init_queue) * 100
+    queue_reduction = (np.mean(initial_queues) - avg_queue) / max(
+        1e-3, np.mean(initial_queues)
+    ) * 100
 
     return {
         "avg_wait": avg_wait,
@@ -80,9 +88,12 @@ def run_baseline(env, n_episodes=5):
     total_wait = 0.0
     total_queues = 0.0
     total_steps = 0
+    initial_queues = []
+    total_throughput = 0.0
 
     for _ in range(n_episodes):
         env.reset()
+        initial_queues.append(np.mean(env.queue))
         done = False
         step_cnt = 0
         phase = 0  # start with NS green
@@ -95,14 +106,15 @@ def run_baseline(env, n_episodes=5):
             _, reward, done, info = env.step(action)
             total_wait += -reward
             total_queues += np.sum(info["queues"])
+            total_throughput += info.get("departed", 0.0)
             total_steps += 1
 
     avg_wait = total_wait / max(1, total_steps)
     avg_queue = total_queues / max(1, total_steps)
-    init_q = np.mean(env.queue) if hasattr(env, "queue") else 5.0
-    queue_reduction = ((init_q - avg_queue / max(1, total_steps)) /
-                       max(1e-3, init_q)) * 100
-    throughput = (avg_queue / max(1, total_steps)) * 60
+    queue_reduction = (np.mean(initial_queues) - avg_queue) / max(
+        1e-3, np.mean(initial_queues)
+    ) * 100
+    throughput = (total_throughput / max(1, total_steps)) * 60
 
     return {
         "avg_wait": avg_wait,

@@ -5,7 +5,7 @@
 **Autonomous Traffic Management System (ATMS)** is a prototype that demonstrates how deep‑learning models can dynamically control traffic‑signal phases at a single intersection (and, with minor modifications, multiple intersections).
 
 - **Goal:** Minimise average waiting time, reduce queue lengths, and increase throughput by learning an optimal signal‑phase policy from real‑time traffic state (queue lengths, vehicle count, current phase).
-- **Tech stack:** Python 3, PyTorch, NumPy, Matplotlib (optional Pygame for visualisation).
+- **Tech stack:** Python 3, PyTorch, NumPy and Matplotlib (optional browser visualiser).
 - **Two model families:**
   - **MLPModel** – a feed‑forward Multi‑Layer Perceptron that maps the current intersection state to a probability distribution over the two possible phases (NS‑green / EW‑green).
   - **RNNModel** – an LSTM/GRU that ingests a short history of states, capturing temporal congestion patterns and alleviating vanishing‑gradient issues.
@@ -15,7 +15,7 @@
   - **DQN (Deep Q‑Network)** as a value‑based alternative with ε‑greedy exploration.
 - **Baseline:** Fixed‑time controller that toggles phases every 5 steps (standard traffic‑engineering plan).
 - **Evaluation:** Average waiting time, queue‑length reduction (%), and throughput (vehicles / minute). Results are visualised with bar‑charts.
-- **Visualisation (optional):** Pygame window that draws the intersection, queues, current phase and the agent’s action probabilities.
+- **Visualisation (optional):** Web-based visualiser that displays the intersection, queue bars, current phase and the agent's action probabilities using HTML5 Canvas. Data is exported as `results/rl_rollout.json` after training/evaluation.
 
 ---
 
@@ -42,7 +42,7 @@ flowchart TD
 
 4. **Evaluation (`src/evaluate.py`)** – runs a trained policy inside the environment, gathers metrics and produces a grouped bar‑chart comparing the learning agent against the fixed‑time baseline.
 
-5. **Optional GUI** – `src/gui.py` (Pygame) visualises the intersection, queue bars, phase colour and the policy’s action probabilities in real time.
+5. **Optional GUI** – `web_visualizer/visualizer.html` visualises the intersection, queue bars, phase colour and the policy’s action probabilities in the browser.
 
 ---
 
@@ -169,7 +169,7 @@ pip install -r requirements.txt
 #   • numpy >= 1.20
 #   • torch >= 1.8
 #   • matplotlib >= 3.3
-# (optional) pip install pygame   # for the GUI visualiser
+# (optional) pip install pygame    # no longer required; GUI replaced by web visualiser
 ```
 
 ### 2. Quick supervised baseline (original code)
@@ -193,14 +193,14 @@ python main.py --mode rl --algo reinforce --epochs 50 --max-steps 200
 python main.py --mode rl --algo dqn --epochs 100 --max-steps 200
 ```
 - Runs the DQN loop (ε‑greedy exploration, MSE bellman target).  
-- Generates `results/dqn_comparison.png`.
+- Generates `results/rl_comparison.png` (the same comparison output used by the RL runner).
 
-### 5. Launch the Pygame visualiser (after any training run)
+### 5. Launch the web visualiser (after any training run)
 
 ```bash
 python main.py --mode rl --algo reinforce --epochs 30 --max-steps 100 --gui
 ```
-- A window opens showing the intersection, queue bars, current phase colour, and the agent’s action probabilities.  
+- A browser window opens showing the intersection, queue bars, current phase colour, and the agent’s action probabilities.
 - The simulation loops continuously, allowing you to watch the learned policy in action.
 
 ### 6. Customising the run
