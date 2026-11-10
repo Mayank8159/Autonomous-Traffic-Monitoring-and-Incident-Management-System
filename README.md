@@ -1,59 +1,5 @@
 # Autonomous Traffic Management System (ATMS)
 
-## CSS Styling (for local preview)
-
-*Copy the CSS block below into a `README.html` or your local markdown viewer to enable the modern layout.*
-
-```css
-/* Modern CSS for README – works in GitHub Pages & local preview */
-body {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  line-height: 1.6;
-  color: #333;
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 20px;
-}
-h1, h2, h3 {
-  color: #2c3e50;
-  margin-top: 2em;
-}
-table {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 20px 0;
-}
-th, td {
-  border: 1px solid #ddd;
-  padding: 12px;
-  text-align: left;
-}
-th {
-  background-color: #f4f4f4;
-}
-code {
-  background-color: #f8f8f8;
-  padding: 2px 4px;
-  border-radius: 3px;
-  font-family: Consolas, Menlo, Monaco, monospace;
-}
-pre {
-  background-color: #f8f8f8;
-  padding: 15px;
-  border-radius: 5px;
-  overflow-x: auto;
-}
-a {
-  color: #3498db;
-  text-decoration: none;
-}
-a:hover {
-  text-decoration: underline;
-}
-```
-
----
-
 ## Project Title & Overview
 
 **Autonomous Traffic Management System (ATMS)** is a prototype that demonstrates how deep‑learning models can dynamically control traffic‑signal phases at a single intersection (and, with minor modifications, multiple intersections).
@@ -123,21 +69,96 @@ a:hover {
 
 ---
 
-## Mathematical Formulations / Equations Used
+## Mathematical Formulations
 
-| Concept | Equation | Where it appears |
-|---|---|---|
-| **ReLU activation** | \( f_{\text{ReLU}}(x) = \max(0, x) \) | `model.py` – hidden layers of MLP and RNN. |
-| **Sigmoid** | \( \sigma(x) = \frac{1}{1+e^{-x}} \) | Baseline fixed‑time logic; also in LSTM input gates. |
-| **Softmax** (output layer) | \( \displaystyle \hat{y}_i = \frac{e^{z_i}}{\sum_{j=1}^{K} e^{z_j}} \) | `model.py` – produces probability distribution over the two signal phases. |
-| **Cross‑Entropy loss** (supervised pre‑training) | \( \mathcal{L}_{\text{CE}} = -\sum_{c} y_c \log \hat{y}_c \) | `trainer.py` – used when training on labelled dataset (not the main RL path). |
-| **REINFORCE policy‑gradient loss** | \( \displaystyle \mathcal{L}_{\text{RL}} = -\frac{1}{T}\sum_{t=1}^{T} \log \pi(a_t|s_t)\, \hat{A}_t \) (with advantage \(\hat{A}_t = G_t - b\)) | `src/trainer.py` – REINFORCE implementation. |
-| **Adam update** | \( m_t = \beta_1 m_{t-1} + (1-\beta_1) g_t \) <br> \( v_t = \beta_2 v_{t-1} + (1-\beta_2) g_t^2 \) <br> \( \theta_{t+1} = \theta_t - \alpha \frac{m_t}{\sqrt{v_t} + \epsilon} \) | `src/trainer.py` – both REINFORCE and DQN optimisers. |
-| **He (Kaiming) initialization** | \( W \sim \mathcal{N}\!\left(0,\; \frac{2}{n_{\text{in}}}\right) \) for ReLU layers | `model.py` – `init.kaiming_uniform_`. |
-| **Batch Normalisation** | \( \hat{x}_i = \frac{x_i - \mu_B}{\sqrt{\sigma_B^2 + \epsilon}} \) ; \( y_i = \gamma \hat{x}_i + \beta \) | `model.py` – after each hidden Linear layer. |
-| **Dropout** | Randomly zero out activations with probability \(p\) during training. | `model.py` – `nn.Dropout(dropout)`. |
-| **LSTM cell equations** | \( i_t = \sigma(W_i[h_{t-1},x_t] + b_i) \) <br> \( f_t = \sigma(W_f[h_{t-1},x_t] + b_f) \) <br> \( g_t = \tanh(W_c[h_{t-1},x_t] + b_c) \) <br> \( o_t = \sigma(W_o[h_{t-1},x_t] + b_o) \) <br> \( c_t = f_t \odot c_{t-1} + i_t \odot g_t \) <br> \( h_t = o_t \odot \tanh(c_t) \) | `model.py` – `RNNModel` forward pass (PyTorch abstracts these, but the equations are shown for course relevance). |
-| **Bellman equation (DQN)** | \( y = r + \gamma \max_{a'} Q(s',a'; \theta^{-}) \) | `src/trainer.py` – DQN loss target. |
+Below are the key equations used in the project. They are written with LaTeX‑style math delimiters (`$...$` for inline and `$$...$$` for displayed equations) so that they render correctly on GitHub (GitHub uses MathJax/KaTeX for markdown).
+
+### Inline expressions (rendered within text)
+
+- **ReLU activation:** `f_{\text{ReLU}}(x) = \max(0, x)`
+- **Sigmoid:** `\sigma(x) = \frac{1}{1+e^{-x}}`
+- **Softmax (output layer):** `\hat{y}_i = \frac{e^{z_i}}{\sum_{j=1}^{K} e^{z_j}}`
+
+### Displayed equations (stand‑alone blocks)
+
+**ReLU activation**
+
+$$
+f_{\text{ReLU}}(x) = \max(0, x)
+$$
+
+**Sigmoid**
+
+$$
+\sigma(x) = \frac{1}{1+e^{-x}}
+$$
+
+**Softmax (output layer)**
+
+$$
+\hat{y}_i = \frac{e^{z_i}}{\sum_{j=1}^{K} e^{z_j}}
+$$
+
+**Cross‑Entropy loss** (supervised pre‑training)
+
+$$
+\mathcal{L}_{\text{CE}} = -\sum_{c} y_c \log \hat{y}_c
+$$
+
+**REINFORCE policy‑gradient loss**
+
+$$
+\mathcal{L}_{\text{RL}} = -\frac{1}{T}\sum_{t=1}^{T} \log \pi(a_t|s_t)\, \hat{A}_t
+\qquad\text{with advantage }\hat{A}_t = G_t - b
+$$
+
+**Adam optimizer update**
+
+$$
+\begin{aligned}
+m_t &= \beta_1 m_{t-1} + (1-\beta_1) g_t \\
+v_t &= \beta_2 v_{t-1} + (1-\beta_2) g_t^2 \\
+\theta_{t+1} &= \theta_t - \alpha \frac{m_t}{\sqrt{v_t} + \epsilon}
+\end{aligned}
+$$
+
+**He (Kaiming) initialization** for ReLU layers
+
+$$
+W \sim \mathcal{N}\!\left(0,\; \frac{2}{n_{\text{in}}}\right)
+$$
+
+**Batch Normalisation**
+
+$$
+\hat{x}_i = \frac{x_i - \mu_B}{\sqrt{\sigma_B^2 + \epsilon}}, \qquad
+y_i = \gamma \hat{x}_i + \beta
+$$
+
+**Dropout** (probability `p`)
+
+Randomly zero out activations with probability `p` during training.
+
+**LSTM cell equations** (shown for completeness; PyTorch abstracts them)
+
+$$
+\begin{aligned}
+i_t &= \sigma(W_i[h_{t-1},x_t] + b_i) \\
+f_t &= \sigma(W_f[h_{t-1},x_t] + b_f) \\
+g_t &= \tanh(W_c[h_{t-1},x_t] + b_c) \\
+o_t &= \sigma(W_o[h_{t-1},x_t] + b_o) \\
+c_t &= f_t \odot c_{t-1} + i_t \odot g_t \\
+h_t &= o_t \odot \tanh(c_t)
+\end{aligned}
+$$
+
+**Bellman equation** (DQN loss target)
+
+$$
+y = r + \gamma \max_{a'} Q(s',a'; \theta^{-})
+$$
+
+*Tip:* If the equations do not render in your viewer, copy the displayed LaTeX code into a local Markdown/LaTeX renderer (e.g., Typora, Obsidian, or a Jupyter notebook) that supports MathJax/KaTeX.
 
 ---
 
