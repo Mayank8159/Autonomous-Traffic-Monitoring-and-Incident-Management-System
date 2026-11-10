@@ -1,278 +1,298 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Traffic Signal Policy Visualizer</title>
     <style>
+        :root {
+            color-scheme: dark;
+            --bg: #0b1020;
+            --panel: #151d32;
+            --panel-light: #1b2741;
+            --border: #2b3a5b;
+            --text: #e8eefc;
+            --muted: #91a1c0;
+            --accent: #6ea8fe;
+            --green: #39d98a;
+        }
+
+        * { box-sizing: border-box; }
         body {
-            font-family: Arial, sans-serif;
             margin: 0;
-            padding: 20px;
-            background: #f5f5f5;
+            min-height: 100vh;
+            padding: 28px 20px 40px;
+            background: radial-gradient(circle at top, #172441 0, var(--bg) 46%);
+            font: 15px "Segoe UI", Arial, sans-serif;
+            color: var(--text);
         }
-
         h1 {
+            margin: 0 auto 8px;
             text-align: center;
-            color: #333;
+            font-size: clamp(24px, 4vw, 36px);
+            letter-spacing: .04em;
         }
-
-        .controls {
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
+        .controls, .help, .legend {
+            max-width: 900px;
+            margin: 16px auto;
         }
-
+        .controls, .help {
+            padding: 16px 18px;
+            background: linear-gradient(145deg, var(--panel-light), var(--panel));
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            box-shadow: 0 12px 30px #0005;
+        }
         .control-row {
-            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 8px 0;
         }
-
-        .control-row label {
-            margin-right: 15px;
+        label { color: var(--muted); }
+        input {
+            width: 92px;
+            margin-left: 6px;
+            padding: 8px 10px;
+            color: var(--text);
+            background: #0c1428;
+            border: 1px solid var(--border);
+            border-radius: 7px;
         }
-
-        canvas {
-            background: white;
-            border: 1px solid #ddd;
-            display: block;
-            margin: 0 auto;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        button {
+            padding: 9px 14px;
+            color: var(--text);
+            background: #243452;
+            border: 1px solid #3b527b;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background .2s, transform .2s, border-color .2s;
         }
-
-        #status {
+        button:hover {
+            background: #31517e;
+            border-color: var(--accent);
+            transform: translateY(-1px);
+        }
+        button:active { transform: translateY(0); }
+        .help {
+            background: #14253c;
+            border-left: 4px solid var(--accent);
+            line-height: 1.6;
+            color: #cbd8f2;
+        }
+        .help strong { color: #fff; }
+        .legend {
+            color: var(--muted);
             text-align: center;
-            margin-top: 10px;
-            color: #666;
-            font-size: 14px;
+            line-height: 1.5;
+        }
+        canvas {
+            display: block;
+            width: min(100%, 900px);
+            height: auto;
+            margin: 20px auto 0;
+            border: 1px solid #41557e;
+            border-radius: 14px;
+            box-shadow: 0 18px 45px #0008, 0 0 0 5px #111a2d;
+        }
+        #status {
+            min-height: 22px;
+            margin: 16px;
+            color: var(--green);
+            text-align: center;
+            font-weight: 600;
+            letter-spacing: .02em;
         }
     </style>
 </head>
-
 <body>
     <h1>Traffic Signal Policy Visualizer</h1>
-
     <div class="controls">
         <div class="control-row">
-            <label>Speed (ms): <input type="number" id="speed" value="50" min="1" max="1000"></label>
-            <label>Pause (ms): <input type="number" id="pause" value="100" min="0" max="5000"></label>
+            <label>Step delay (ms):
+                <input id="speed" type="number" value="500" min="100" max="5000">
+            </label>
         </div>
         <div class="control-row">
-            <button id="loadBtn" onclick="loadData()">Load Latest Data</button>
-            <button id="resetBtn" onclick="resetVisualization()">Reset</button>
+            <button onclick="loadData()">Load latest data</button>
+            <button id="playBtn" onclick="togglePlayback()">Pause</button>
+            <button onclick="showNextStep()">Next step</button>
+            <button onclick="resetVisualization()">Reset</button>
         </div>
     </div>
-
-    <canvas id="canvas" width="800" height="600"></canvas>
+    <div class="help">
+        <strong>How to read the scene:</strong>
+        This is a top-down intersection. Every colored car represents one queued vehicle.
+        Cars line up on the North, South, East, and West approaches. The green signal shows
+        which direction the policy allows to move. The larger probability is the policy's
+        preferred next action. Reward is negative average queue, so closer to zero is better.
+    </div>
+    <div class="legend">Red, blue, yellow, and purple cars identify the four approaches. The road markings and stop lines show the intersection layout.</div>
+    <canvas id="canvas" width="900" height="650"></canvas>
     <div id="status">Loading data...</div>
     <script src="rollout_data.js"></script>
-
     <script>
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
         const speedInput = document.getElementById('speed');
-        const pauseInput = document.getElementById('pause');
+        const playBtn = document.getElementById('playBtn');
         const statusDiv = document.getElementById('status');
+        const CX = 450, CY = 325, ROAD = 180;
+        let data = null, step = 0, timer = null, playing = true;
 
-        let animationId = null;
-        let currentData = null;
-        let currentStep = 0;
-        let speed = 50;
-        let pause = 100;
-
-        // Canvas setup - same dimensions as the Pygame visualizer
-        const CENTER_X = 400;
-        const CENTER_Y = 300;
-        const ROAD_WIDTH = 100;
-
-        function resizeCanvas() {
-            canvas.width = canvas.offsetWidth;
-            canvas.height = canvas.offsetHeight;
-        }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
-
-        // Draw roads (same as Pygame version)
-        function drawRoads() {
-            ctx.strokeStyle = '#888888';
-            ctx.lineWidth = ROAD_WIDTH;
-
-            // North-south road (vertical line)
+        function drawRoad() {
+            ctx.fillStyle = '#6e9b55';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#30343b';
+            ctx.fillRect(CX - ROAD / 2, 0, ROAD, canvas.height);
+            ctx.fillRect(0, CY - ROAD / 2, canvas.width, ROAD);
+            ctx.strokeStyle = '#d1b85a';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([22, 18]);
             ctx.beginPath();
-            ctx.moveTo(CENTER_X, 100);
-            ctx.lineTo(CENTER_X, 500);
+            ctx.moveTo(CX - 4, 0); ctx.lineTo(CX - 4, CY - ROAD / 2);
+            ctx.moveTo(CX + 4, CY + ROAD / 2); ctx.lineTo(CX + 4, canvas.height);
+            ctx.moveTo(0, CY - 4); ctx.lineTo(CX - ROAD / 2, CY - 4);
+            ctx.moveTo(CX + ROAD / 2, CY + 4); ctx.lineTo(canvas.width, CY + 4);
             ctx.stroke();
-
-            // East-west road (horizontal line)
+            ctx.setLineDash([]);
+            ctx.strokeStyle = '#dbe5f4';
+            ctx.lineWidth = 6;
             ctx.beginPath();
-            ctx.moveTo(100, CENTER_Y);
-            ctx.lineTo(700, CENTER_Y);
+            ctx.moveTo(CX - ROAD / 2, CY - ROAD / 2 - 12); ctx.lineTo(CX + ROAD / 2, CY - ROAD / 2 - 12);
+            ctx.moveTo(CX - ROAD / 2, CY + ROAD / 2 + 12); ctx.lineTo(CX + ROAD / 2, CY + ROAD / 2 + 12);
+            ctx.moveTo(CX - ROAD / 2 - 12, CY - ROAD / 2); ctx.lineTo(CX - ROAD / 2 - 12, CY + ROAD / 2);
+            ctx.moveTo(CX + ROAD / 2 + 12, CY - ROAD / 2); ctx.lineTo(CX + ROAD / 2 + 12, CY + ROAD / 2);
             ctx.stroke();
+            ctx.fillStyle = '#ffffff1f';
+            ctx.fillRect(CX - ROAD / 2, CY - ROAD / 2, ROAD, ROAD);
         }
 
-        // Draw queue bars (same logic as Pygame version)
-        function drawQueues(queueData) {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, canvas.width, canvas.height); // clear
-
-            drawRoads();
-
-            // Max bar height
-            const maxBar = 50;
-
-            // Lane positions (same as Pygame gui.py)
-            const lanePositions = [
-                { x: CENTER_X - ROAD_WIDTH / 2, y: 200, idx: 0, label: 'N-in' },   // N-in (north top)
-                { x: CENTER_X + ROAD_WIDTH / 2, y: 400, idx: 1, label: 'E-in' },   // E-in (east right)
-                { x: CENTER_X - ROAD_WIDTH / 2, y: 400, idx: 2, label: 'N-out' },  // N-out (south bottom)
-                { x: CENTER_X, y: CENTER_Y - ROAD_WIDTH / 2, idx: 3, label: 'W-in' }, // W-in (west left) - placeholder
-            ];
-
-            // Scale queue length to visible bar height
-            for (const lane of lanePositions) {
-                const queueLen = queueData ? parseFloat(queueData[lane.idx] || 0) : 0;
-                const barH = Math.max(0, Math.min(maxBar, (queueLen / 30) * maxBar));
-                const color = barH > 0 ? '#00ff00' : '#cccccc';
-
-                // Draw bar
-                const barWidth = ROAD_WIDTH / 2;
-                ctx.fillStyle = color;
-                ctx.fillRect(lane.x - barWidth / 2, lane.y - barH, barWidth, barH);
-
-                // Label
-                ctx.fillStyle = '#000000';
-                ctx.font = '16px Arial';
-                ctx.textAlign = 'center';
-                ctx.fillText(lane.label, lane.x, lane.y - barH - 10);
-            }
-        }
-
-        // Draw phase indicator (same as Pygame version)
-        function drawPhase(phase) {
-            // phase: 0 -> NS green, 1 -> EW green
-            ctx.fillStyle = phase === 0 ? '#00ff00' : '#ff0000';
+        function drawCar(x, y, angle, color) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(angle);
+            ctx.fillStyle = '#15181d';
+            ctx.fillRect(-14, -8, 28, 16);
+            ctx.fillStyle = color;
             ctx.beginPath();
-            ctx.arc(650, 50, 20, 0, Math.PI * 2);
+            ctx.roundRect(-12, -7, 24, 14, 3);
             ctx.fill();
-
-            ctx.fillStyle = '#000000';
-            ctx.font = '16px Arial';
-            ctx.textAlign = 'left';
-            ctx.fillText(`Phase: ${phase === 0 ? 'NS Green' : 'EW Green'}`, 680, 55);
+            ctx.fillStyle = '#c9e8f4';
+            ctx.fillRect(-7, -5, 6, 10);
+            ctx.fillRect(1, -5, 6, 10);
+            ctx.fillStyle = '#17191b';
+            ctx.fillRect(-10, -10, 6, 3); ctx.fillRect(4, -10, 6, 3);
+            ctx.fillRect(-10, 7, 6, 3); ctx.fillRect(4, 7, 6, 3);
+            ctx.restore();
         }
 
-        // Draw probabilities
-        function drawProbs(probs) {
-            if (!probs) return;
-
-            ctx.fillStyle = '#000000';
-            ctx.font = '16px Arial';
-            ctx.textAlign = 'left';
-            ctx.fillText(`P(NS): ${parseFloat(probs[0]).toFixed(2)}  P(EW): ${parseFloat(probs[1]).toFixed(2)}`, 20, 30);
+        function drawVehicles(queues) {
+            const lanes = [
+                // Cars queue outside the stop lines. They never enter the junction.
+                { x: CX - 35, start: CY - ROAD / 2 - 25, dx: 0, dy: -29, angle: Math.PI / 2, name: 'North', color: '#e74c3c' },
+                { x: CX + 35, start: CY + ROAD / 2 + 25, dx: 0, dy: 29, angle: -Math.PI / 2, name: 'South', color: '#3498db' },
+                { y: CY - 35, start: CX + ROAD / 2 + 25, dx: 29, dy: 0, angle: Math.PI, name: 'East', color: '#f1c40f' },
+                { y: CY + 35, start: CX - ROAD / 2 - 25, dx: -29, dy: 0, angle: 0, name: 'West', color: '#9b59b6' }
+            ];
+            lanes.forEach((lane, i) => {
+                const value = Number(queues[i] || 0);
+                const count = Math.min(12, Math.max(0, Math.round(value)));
+                for (let n = 0; n < count; n++) {
+                    const x = lane.x === undefined ? lane.start + lane.dx * n : lane.x;
+                    const y = lane.y === undefined ? lane.start + lane.dy * n : lane.y;
+                    drawCar(x, y, lane.angle, lane.color);
+                }
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 15px Arial';
+                ctx.textAlign = 'center';
+                const labelX = lane.x === undefined ? (i === 2 ? 785 : 115) : lane.x;
+                const labelY = lane.y === undefined ? (i === 0 ? 35 : 620) : lane.y;
+                ctx.fillText(`${lane.name}: ${value.toFixed(1)} vehicles`, labelX, labelY);
+            });
         }
 
-        // Draw action
-        function drawAction(action) {
-            ctx.fillStyle = '#000000';
+        function drawSignal(phase) {
+            ctx.fillStyle = '#222';
+            ctx.fillRect(735, 35, 40, 92);
+            ctx.fillStyle = phase === 0 ? '#39d353' : '#555';
+            ctx.beginPath(); ctx.arc(755, 58, 11, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = phase === 1 ? '#39d353' : '#555';
+            ctx.beginPath(); ctx.arc(755, 103, 11, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#111';
             ctx.font = '16px Arial';
             ctx.textAlign = 'left';
-            ctx.fillText(`Action: ${action === 0 ? 'NS' : 'EW'} green`, 20, 50);
+            ctx.fillText(`Signal: ${phase === 0 ? 'North-South green' : 'East-West green'}`, 20, 130);
         }
 
-        // Load data from the JSON file generated by Python
+        function drawText(item) {
+            ctx.fillStyle = '#111';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Step: ${item.step}`, 20, 30);
+            ctx.fillText(`Action: ${item.action === 0 ? 'North-South' : 'East-West'} green`, 20, 55);
+            ctx.fillText(`Policy: NS ${(Number(item.probs[0]) * 100).toFixed(0)}% | EW ${(Number(item.probs[1]) * 100).toFixed(0)}%`, 20, 80);
+            ctx.fillText(`Reward: ${Number(item.reward).toFixed(2)} (closer to 0 is better)`, 20, 105);
+        }
+
+        function render() {
+            if (!data || step >= data.length) {
+                playing = false;
+                playBtn.textContent = 'Play';
+                statusDiv.textContent = `Simulation complete: ${data ? data.length : 0} steps viewed.`;
+                return;
+            }
+            const item = data[step];
+            drawRoad();
+            drawVehicles(item.queues);
+            drawSignal(item.phase);
+            drawText(item);
+            statusDiv.textContent = `Showing step ${step + 1} of ${data.length}`;
+            step++;
+            if (playing) timer = setTimeout(render, Math.max(100, Number(speedInput.value) || 500));
+        }
+
+        function togglePlayback() {
+            playing = !playing;
+            playBtn.textContent = playing ? 'Pause' : 'Play';
+            if (playing) render();
+        }
+        function showNextStep() {
+            if (!data) return;
+            if (timer) clearTimeout(timer);
+            playing = false;
+            playBtn.textContent = 'Play';
+            render();
+        }
+        function resetVisualization() {
+            if (timer) clearTimeout(timer);
+            step = 0;
+            playing = false;
+            playBtn.textContent = 'Play';
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            statusDiv.textContent = 'Reset. Click Load latest data to replay.';
+        }
         async function loadData() {
             try {
                 if (Array.isArray(window.ATMS_ROLLOUT) && window.ATMS_ROLLOUT.length) {
-                    currentData = window.ATMS_ROLLOUT;
-                    statusDiv.textContent = `Loaded local data: ${currentData.length} steps`;
-                    statusDiv.style.color = 'green';
-                    currentStep = 0;
-                    startAnimation();
-                    return;
-                }
-                // Try to fetch the rollout data generated by main.py
-                const response = await fetch('../results/rl_rollout.json');
-                if (!response.ok) {
-                    statusDiv.textContent = 'No data found. Run training first with --mode rl.';
-                    statusDiv.style.color = 'red';
-                    statusDiv.innerHTML += '<br/><i>Expected at: ../results/rl_rollout.json</i>';
-                    return;
-                }
-                currentData = await response.json();
-                currentData = Array.isArray(currentData) ? currentData : currentData.steps;
-                if (!Array.isArray(currentData) || !currentData.length) {
-                    throw new Error('The rollout file contains no steps.');
-                }
-                statusDiv.textContent = `Loaded data: ${currentData.length} steps`;
-                statusDiv.style.color = 'green';
-                currentStep = 0;
-                startAnimation();
-            } catch (err) {
-                if (Array.isArray(window.ATMS_ROLLOUT)) {
-                    currentData = window.ATMS_ROLLOUT;
-                    statusDiv.textContent = `Loaded local data: ${currentData.length} steps`;
-                    statusDiv.style.color = 'green';
-                    currentStep = 0;
-                    startAnimation();
+                    data = window.ATMS_ROLLOUT;
                 } else {
-                    statusDiv.textContent = 'Error loading data: ' + err.message;
-                    statusDiv.style.color = 'red';
+                    const response = await fetch('../results/rl_rollout.json');
+                    data = await response.json();
+                    data = Array.isArray(data) ? data : data.steps;
                 }
+                if (!Array.isArray(data) || !data.length) throw new Error('No rollout steps found.');
+                step = 0;
+                playing = true;
+                playBtn.textContent = 'Pause';
+                render();
+            } catch (error) {
+                statusDiv.textContent = `Could not load rollout data: ${error.message}`;
+                statusDiv.style.color = '#b00020';
             }
         }
-
-        function resetVisualization() {
-            currentStep = 0;
-            if (animationId) {
-                cancelAnimationFrame(animationId);
-                animationId = null;
-            }
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            statusDiv.textContent = 'Reset. Click "Load Latest Data" to load new data.';
-            statusDiv.style.color = '#666';
-        }
-
-        function startAnimation() {
-            if (!currentData) return;
-            animateStep();
-        }
-
-        function animateStep() {
-            if (!currentData || currentStep >= currentData.length) {
-                statusDiv.textContent = 'Simulation complete.';
-                statusDiv.style.color = 'green';
-                return;
-            }
-
-            const stepData = currentData[currentStep];
-
-            // Clear and redraw
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            drawRoads();
-            drawQueues(stepData.queues);
-            drawPhase(stepData.phase);
-            drawProbs(stepData.probs);
-            drawAction(stepData.action);
-
-            currentStep++;
-            animationId = requestAnimationFrame(animateStep);
-        }
-
-        // Handle control inputs
-        speedInput.addEventListener('input', (e) => {
-            speed = parseInt(e.target.value);
-        });
-
-        pauseInput.addEventListener('input', (e) => {
-            pause = parseInt(e.target.value);
-        });
-
-        // Initialize
-        resetVisualization();
         loadData();
     </script>
 </body>
-
 </html>
