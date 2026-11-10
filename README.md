@@ -23,9 +23,8 @@
 
 ```mermaid
 flowchart TD
-    A[Traffic Environment (env.py)] -->|state| B[Deep‑Learning Agent (model.py + trainer.)]
-    B -->|action| A
-    B -->|metrics| C[Evaluation/Plot (evaluate.py)]
+    A[Traffic Env] --> B[Agent]
+    B --> C[Evaluation]
 ```
 
 1. **Environment (`src/env.py`)** – Light‑weight grid simulation (or placeholder for SUMO/TraCI). At each time‑step `t` it returns:
