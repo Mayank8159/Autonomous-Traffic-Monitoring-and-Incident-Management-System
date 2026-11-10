@@ -26,10 +26,6 @@ flowchart TD
     A[Traffic Environment (env.py)] -->|state s_t (7-dim)| B[Deep‑Learning Agent (model.py + trainer.)]
     B -->|action a_t ∈ {0,1}| A
     B -->|metrics (wait, queue, throughput)| C[Evaluation/Plot (evaluate.py)]
-
-    style A fill:#f9f9f9,stroke:#333,stroke-width:2px
-    style B fill:#e0e0e0,stroke:#333,stroke-width:2px
-    style C fill:#d8f3ff,stroke:#333,stroke-width:2px
 ```
 
 1. **Environment (`src/env.py`)** – Light‑weight grid simulation (or placeholder for SUMO/TraCI). At each time‑step `t` it returns:
