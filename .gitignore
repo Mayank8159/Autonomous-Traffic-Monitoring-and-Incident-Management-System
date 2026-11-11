@@ -2,3 +2,11 @@ venv/
 __pycache__/
 *.pyc
 .env
+# Uploaded videos
+uploads/*.mp4
+
+# Virtual environment
+venv/
+
+# Model files (only if not needed in deployment)
+# *.pt
