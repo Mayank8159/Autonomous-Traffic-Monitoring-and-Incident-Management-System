@@ -58,7 +58,7 @@ def run_controller(env, model, n_episodes=5, mode="mlp", rl=False):
             ep_steps += 1
 
             total_wait += -reward
-            total_queues += np.sum(info["queues"])
+            total_queues += np.mean(info["queues"])
             total_throughput += info.get("departed", 0.0)
             steps += 1
 

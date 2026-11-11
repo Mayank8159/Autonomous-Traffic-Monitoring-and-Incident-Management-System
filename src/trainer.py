@@ -16,7 +16,9 @@ def generate_synthetic_data(env, n_samples=3000, seq_len=1):
     for _ in range(n_samples):
         state = env.reset()
         states.append(state)
-        labels.append(int(state[0] + state[3] < state[1] + state[2]))
+        # Direction 0 (NS) queue: state[0] + state[1]
+        # Direction 1 (EW) queue: state[2] + state[3]
+        labels.append(int(state[0] + state[1] < state[2] + state[3]))
     x = torch.tensor(np.asarray(states), dtype=torch.float32)
     if seq_len > 1:
         x = x.unsqueeze(1).repeat(1, seq_len, 1)
@@ -67,56 +69,54 @@ def reinforce_train(model, env, n_episodes=200, max_steps=200,
     model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
-    model.train()
     for ep in range(1, n_episodes + 1):
         state = env.reset()
-        state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
-
-        log_probs = []
+        states = []
+        actions = []
         rewards = []
-        entropies = []
 
-        for t in range(max_steps):
-            # ---------- forward ----------
-            # Use model.eval() so that BatchNorm uses running stats (helps with batch size 1)
-            model.eval()
-            probs = model(state)                     # (2,) — gradients will be tracked
-            model.train()
-            # sample action
-            m = torch.distributions.Categorical(probs)
-            action = m.sample()
+        model.eval()
+        with torch.no_grad():
+            for t in range(max_steps):
+                state_t = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
+                probs = model(state_t)
+                m = torch.distributions.Categorical(probs)
+                action = m.sample().item()
 
-            # store log prob and entropy for later
-            log_probs.append(m.log_prob(action))
-            entropies.append(m.entropy())
+                next_state, reward, done, info = env.step(action)
 
-            # ---------- env step ----------
-            next_state, reward, done, info = env.step(action.item())
+                states.append(state_t)
+                actions.append(action)
+                rewards.append(reward)
 
-            rewards.append(reward)
-            state = torch.tensor(next_state, dtype=torch.float32).unsqueeze(0).to(device)
+                state = next_state
+                if done:
+                    break
 
-            if done:
-                break
-
-        # ---------- compute returns ----------
         returns = compute_return(rewards, gamma=gamma)
         returns = torch.tensor(returns, dtype=torch.float32).to(device)
-        # normalise returns (optional but helps stability)
-        returns = (returns - returns.mean()) / (returns.std() + 1e-8)
+        total_ep_reward = sum(rewards)
+        if len(returns) > 1 and returns.std() > 1e-6:
+            returns = (returns - returns.mean()) / (returns.std() + 1e-8)
 
-        # ---------- loss ----------
-        # policy gradient = - log_prob * advantage (here advantage = return - baseline)
-        # we use the mean return as a simple baseline
-        loss = -torch.stack(log_probs).mul(returns).mean()
-        loss -= 0.01 * torch.stack(entropies).mean()   # entropy bonus
+        # Batch forward pass in train mode so BatchNorm and Dropout operate on batch size T
+        model.train()
+        states_batch = torch.cat(states, dim=0)
+        actions_batch = torch.tensor(actions, dtype=torch.long).to(device)
+
+        probs = model(states_batch)
+        m = torch.distributions.Categorical(probs)
+        log_probs = m.log_prob(actions_batch)
+        entropy = m.entropy()
+
+        loss = -torch.mean(log_probs * returns) - 0.01 * torch.mean(entropy)
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         if ep % 20 == 0:
-            print(f"[Reinforce] Episode {ep:03d} | Return mean {returns.mean().item():.2f} | loss {loss.item():.4f}")
+            print(f"[Reinforce] Episode {ep:03d} | Total reward {total_ep_reward:.1f} | loss {loss.item():.4f}")
 
     return model
 
@@ -148,9 +148,9 @@ class QNetwork(nn.Module):
 
 def dqn_train(model, env, n_episodes=300, max_steps=200,
               lr=1e-3, gamma=0.99, epsilon_start=1.0, epsilon_end=0.05,
-              epsilon_decay=0.995, device="cpu"):
+              epsilon_decay=0.97, target_update_freq=5, device="cpu"):
     """
-    Simple DQN training loop with epsilon‑greedy exploration.
+    Simple DQN training loop with epsilon‑greedy exploration and target network updates.
     Uses Mean‑Squared‑Error loss on the Bellman target.
     """
     model.to(device)
@@ -159,6 +159,7 @@ def dqn_train(model, env, n_episodes=300, max_steps=200,
 
     q = model.to(device)
     target_q = copy.deepcopy(q).to(device)
+    target_q.eval()
 
     epsilon = epsilon_start
 
@@ -202,6 +203,10 @@ def dqn_train(model, env, n_episodes=300, max_steps=200,
 
         # decay epsilon
         epsilon = max(epsilon_end, epsilon * epsilon_decay)
+
+        # periodically sync target network
+        if ep % target_update_freq == 0:
+            target_q.load_state_dict(q.state_dict())
 
         if ep % 20 == 0:
             print(f"[DQN] Episode {ep:03d} | Total reward {total_reward:.2f} | eps {epsilon:.3f}")

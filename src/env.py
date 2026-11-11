@@ -24,8 +24,9 @@ class TrafficEnv:
     """
 
     def __init__(self, green_duration=5, red_duration=5, max_queue=30.0,
-                 sumo=False, max_steps=200):
+                 sumo=False, max_steps=200, min_green=3):
         self.green_duration = green_duration
+        self.min_green = min_green if min_green is not None else 3
         self.red_duration = red_duration
         self.max_queue = max_queue
         self.sumo = sumo
@@ -46,7 +47,7 @@ class TrafficEnv:
     def reset_light(self):
         """Reset the internal grid state."""
         self.queue = np.random.uniform(0, 5, size=4).astype(np.float32)
-        self.total_vehicles = np.random.randint(0, 20)
+        self.total_vehicles = float(np.clip(np.sum(self.queue) + np.random.randint(0, 5), 0, 200))
         self.phase = 0                # 0 → NS green, 1 → EW green
         self.phase_counter = 0
         self.step_cnt = 0
@@ -70,38 +71,58 @@ class TrafficEnv:
         return state.copy()
 
     # -----------------------------------------------------------------
-    # Step – lightweight implementation (unchanged from before)
+    # Step – lightweight implementation with signal switching & min_green
     # -----------------------------------------------------------------
     def step(self, action):
         """
         Execute one action (0 = NS green, 1 = EW green).
         Returns (next_state, reward, done, info).
         """
+        action = int(action)
+        # Phase switching logic with configurable minimum green duration:
         if self.phase_counter == 0:
             self.phase = action
-        self.phase_counter += 1
-        is_green = self.phase_counter <= self.green_duration
+            self.phase_counter = 1
+        elif action != self.phase:
+            if self.phase_counter >= self.min_green:
+                self.phase = action
+                self.phase_counter = 1
+            else:
+                self.phase_counter += 1
+        else:
+            self.phase_counter += 1
 
-        arrival = np.random.uniform(0, 1, size=4).astype(np.float32)
+        # Inflow arrivals across the 4 approaches (North, South, East, West)
+        arrival = np.random.uniform(0, 0.8, size=4).astype(np.float32)
 
-        discharge_rate = 0.5
-        if self.phase == 0:          # NS green
-            depart = np.array([discharge_rate, 0, 0, discharge_rate], dtype=np.float32)
-        else:                       # EW green
-            depart = np.array([0, discharge_rate, discharge_rate, 0], dtype=np.float32)
+        # Outflow departures (vehicles depart only when their signal is green)
+        # 4 approaches: index 0 = North, index 1 = South, index 2 = East, index 3 = West
+        discharge_rate = 0.8
+        if self.phase == 0:          # North-South green, East-West red
+            depart = np.array([discharge_rate, discharge_rate, 0.0, 0.0], dtype=np.float32)
+        else:                       # East-West green, North-South red
+            depart = np.array([0.0, 0.0, discharge_rate, discharge_rate], dtype=np.float32)
 
-        self.queue = np.clip(self.queue + arrival - depart, 0, self.max_queue)
-        departed = float(np.minimum(self.queue + depart, depart).sum())
-        self.total_vehicles = np.clip(np.sum(self.queue) + np.random.randint(0, 5), 0, 200)
+        actual_depart = np.minimum(self.queue, depart)
+        self.queue = np.clip(self.queue + arrival - depart, 0.0, self.max_queue)
+        departed = float(actual_depart.sum())
+        self.total_vehicles = float(np.clip(np.sum(self.queue) + np.random.randint(0, 5), 0, 200))
 
-        avg_queue = np.mean(self.queue)
-        reward = -avg_queue
+        # Reward: minimize average queue, with slight penalty on max queue to prevent starvation
+        avg_queue = float(np.mean(self.queue))
+        max_q = float(np.max(self.queue))
+        reward = -avg_queue - 0.05 * max_q
 
         self.step_cnt += 1
         done = self.step_cnt >= self.max_steps
 
         next_state = self._get_state()
-        info = {"queues": self.queue.copy(), "phase": self.phase, "departed": departed}
+        info = {
+            "queues": self.queue.copy(),
+            "phase": self.phase,
+            "departed": departed,
+            "avg_queue": avg_queue,
+        }
         return next_state, reward, done, info
 
     # -----------------------------------------------------------------

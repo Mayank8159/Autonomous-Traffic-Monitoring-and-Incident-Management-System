@@ -18,13 +18,16 @@ from src.evaluate import run_controller, run_baseline, plot_comparison
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Autonomous Traffic Management System prototype")
-    parser.add_argument("--mode", type=str, choices=["rl", "supervised"], default="rl",
-                        help="Run mode: reinforcement learning or supervised pretraining")
+    parser = argparse.ArgumentParser(description="Autonomous Traffic Management System (ATMS)")
+    parser.add_argument("--mode", type=str,
+                        choices=["rl", "supervised", "video", "hybrid", "gan", "vae", "cnn-train", "server"],
+                        default="rl",
+                        help="Run mode: rl, supervised, video, hybrid, gan, vae, cnn-train, or server")
+    parser.add_argument("--port", type=int, default=8000, help="Port for ATMS web server (mode server)")
     parser.add_argument("--algo", type=str, choices=["reinforce", "dqn"], default="reinforce",
                         help="RL algorithm (only in rl mode)")
-    parser.add_argument("--epochs", type=int, default=50, help="Number of episodes for training")
-    parser.add_argument("--max-steps", type=int, default=200, help="Max steps per episode")
+    parser.add_argument("--epochs", type=int, default=50, help="Number of episodes/epochs for training")
+    parser.add_argument("--max-steps", type=int, default=200, help="Max steps per episode/rollout")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
     parser.add_argument("--hidden-dim", type=int, default=64, help="Hidden size for LSTM/GRU / MLP")
@@ -33,6 +36,11 @@ def parse_args():
                         help="RNN cell type (lstm/gru)")
     parser.add_argument("--num-intersections", type=int, default=1,
                         help="How many intersections to simulate (for coordination demo)")
+    parser.add_argument("--video-path", type=str, default="results/sample_traffic.mp4",
+                        help="Path to real-world traffic video file")
+    parser.add_argument("--scenario", type=str, default="rush_hour",
+                        choices=["normal", "moderate", "heavy", "rush_hour", "uneven", "surge"],
+                        help="Traffic scenario to generate with GAN")
     parser.add_argument("--sumo", action="store_true", help="Use real SUMO if available (fallback to lite)")
     parser.add_argument("--gui", action="store_true", help="Open the web visualizer after exporting rollout data")
     return parser.parse_args()
@@ -146,6 +154,14 @@ def run_rl_loop(args):
             if done:
                 break
 
+    # Save policy checkpoint for hybrid pipeline
+    os.makedirs("models", exist_ok=True)
+    try:
+        torch.save(policy.state_dict(), "models/rl_policy.pt")
+        print("Trained RL policy saved to models/rl_policy.pt")
+    except Exception:
+        pass
+
     # Save rollout data for the web visualizer
     with open("results/rl_rollout.json", "w") as f:
         json.dump(rollout, f, indent=2)
@@ -171,7 +187,7 @@ def main():
     args = parse_args()
     if args.mode == "rl":
         run_rl_loop(args)
-    else:
+    elif args.mode == "supervised":
         # Supervised baseline (original behaviour) – generate data and train MLP
         from src.trainer import generate_synthetic_data, train_model
         from src.model import MLPModel
@@ -187,6 +203,39 @@ def main():
         plot_comparison(learned, base, save_path="results/supervised_comparison.png")
         print("Supervised metrics:", learned)
         print("Baseline metrics:", base)
+    elif args.mode == "cnn-train":
+        from src.cnn_custom import train_custom_cnn
+        train_custom_cnn(epochs=args.epochs, batch_size=32, lr=args.lr)
+    elif args.mode == "gan":
+        from src.gan import train_traffic_gan, generate_scenario
+        gen, disc = train_traffic_gan(epochs=args.epochs, lr=args.lr)
+        print(f"\nGenerating and validating scenario '{args.scenario}':")
+        results = generate_scenario(gen, scenario_type=args.scenario, num_samples=3)
+        for i, r in enumerate(results, 1):
+            print(f"Sample {i}: Validated={r['validated']} | Mean Queue={r['mean_queue']} | Status: {r['status']}")
+    elif args.mode == "vae":
+        from src.vae import train_sequence_vae, detect_incident_anomaly
+        vae, th_warn, th_crit = train_sequence_vae(epochs=args.epochs, lr=args.lr)
+        # Test detection on a test anomaly
+        test_seq = np.random.uniform(2.0, 5.0, size=(5, 4)).astype(np.float32)
+        test_seq[:, 2] = 28.0  # Simulated blockage on East approach
+        alert = detect_incident_anomaly(vae, test_seq, th_warn, th_crit)
+        print(f"\nTest Incident Evaluation -> Level: {alert['level']} | Alert: {alert['alert_message']}")
+    elif args.mode == "server":
+        from src.server import start_server
+        start_server(port=args.port, host="0.0.0.0")
+    elif args.mode in ["video", "hybrid"]:
+        from src.hybrid import run_hybrid_pipeline
+        run_hybrid_pipeline(video_path=args.video_path, max_frames=args.max_steps)
+        if args.gui:
+            project_dir = os.path.abspath(os.path.dirname(__file__))
+            subprocess.Popen(
+                [sys.executable, "-m", "http.server", "8765", "--bind", "127.0.0.1"],
+                cwd=project_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            webbrowser.open("http://127.0.0.1:8765/web_visualizer/visualizer.html")
 
 
 if __name__ == "__main__":
