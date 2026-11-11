@@ -12,7 +12,7 @@ The **Autonomous Traffic Monitoring and Incident Management System (ATMS)** is a
 The project encompasses all five core modules of the academic Deep Learning curriculum:
 1. **Module 1:** Neural network fundamentals (Perceptron, MLP, non-linear activations, Softmax policy).
 2. **Module 2:** Deep learning training dynamics (Backprop, Kaiming He initialization, Adam, BatchNorm, Dropout, MSE/Cross-Entropy, REINFORCE, DQN).
-3. **Module 3:** Convolutional Neural Networks (Real-world video processing, SSDLite/YOLO vehicle detection, multi-object tracking, custom PyTorch CNN for 4-approach spatial density estimation, and 7-D state adaptation).
+3. **Module 3:** Convolutional Neural Networks (Real-world video processing, tiled SSDLite/YOLO vehicle detection, multi-object tracking with parked-car filtering, directional approach assignment, custom PyTorch CNN for 4-approach spatial density estimation, and 7-D state adaptation).
 4. **Module 4:** Recurrent sequence modeling (LSTM & GRU for queue forecasting and trend classification).
 5. **Module 5:** Deep Generative Models (Conditional Sequence GAN for queue synthesis and Sequence $\beta$-VAE for real-time anomaly and incident detection).
 
@@ -24,11 +24,11 @@ The project encompasses all five core modules of the academic Deep Learning curr
 | :--- | :--- | :--- | :--- |
 | **Module 1: Foundations** | Perceptron, Multi-Layer Perceptron (MLP), Sigmoid, ReLU, Softmax output | [`src/model.py`](src/model.py), [`src/trainer.py`](src/trainer.py) | `python main.py --mode supervised` |
 | **Module 2: Training & Optimization** | Backpropagation, Kaiming He Init, Adam optimizer, BatchNorm1d, Dropout, MSE/BCE Loss, Policy Gradient (REINFORCE), Deep Q-Learning (DQN) with target network | [`src/trainer.py`](src/trainer.py), [`src/model.py`](src/model.py), [`src/evaluate.py`](src/evaluate.py) | `python main.py --mode rl --algo reinforce`<br>`python main.py --mode rl --algo dqn` |
-| **Module 3: Computer Vision & CNNs** | Real-world video stream ingestion, Object detection (Torchvision SSDLite/YOLO), Centroid & IOU tracking, 4-approach ROIs, 32×32 occupancy grid, Custom PyTorch CNN (`Conv2d`, `BatchNorm2d`, `MaxPool2d`, `ReLU`, `Linear`), 7-D adapter | [`src/vision.py`](src/vision.py), [`src/tracker.py`](src/tracker.py), [`src/cnn_custom.py`](src/cnn_custom.py), [`src/adapter.py`](src/adapter.py) | `python main.py --mode cnn-train --epochs 5`<br>`python main.py --mode video --video-path results/sample_traffic.mp4` |
+| **Module 3: Computer Vision & CNNs** | Real-world video stream ingestion, Object detection (Torchvision SSDLite/YOLO), 2×2 tiled high-resolution inference with IoU NMS, Centroid tracking, parked vs. moving motion classification, directional approach ROIs, 32×32 occupancy grid, Custom PyTorch CNN (`Conv2d`, `BatchNorm2d`, `MaxPool2d`, `ReLU`, `Linear`), 7-D adapter | [`src/vision.py`](src/vision.py), [`src/tracker.py`](src/tracker.py), [`src/cnn_custom.py`](src/cnn_custom.py), [`src/adapter.py`](src/adapter.py) | `python main.py --mode cnn-train --epochs 5`<br>`python main.py --mode video --video-path results/sample_traffic.mp4` |
 | **Module 4: Temporal Modeling** | Recurrent neural networks (LSTM & GRU), multi-step temporal queue forecasting, rate-of-change trend classification | [`src/temporal.py`](src/temporal.py) | Integrated in hybrid pipeline (`--mode hybrid`) |
 | **Module 5A: Generative Adversarial Networks** | Conditional Sequence GAN, Generator (GRU + Linear + Sigmoid scaling), Discriminator (BiGRU + Linear), multi-condition queue synthesis, physical quality gate validation | [`src/gan.py`](src/gan.py) | `python main.py --mode gan --epochs 10 --scenario rush_hour` |
 | **Module 5B: Variational Autoencoders** | Sequence $\beta$-VAE, GRU encoder-decoder, Reparameterization trick, Gaussian latent space, KL Divergence, threshold calibration, anomaly alerting | [`src/vae.py`](src/vae.py) | `python main.py --mode vae --epochs 8` |
-| **Unified Integration** | End-to-end hybrid video-in-the-loop pipeline & dark-mode surveillance visualizer | [`src/hybrid.py`](src/hybrid.py), [`web_visualizer/visualizer.html`](web_visualizer/visualizer.html) | `python main.py --mode hybrid --max-steps 100` |
+| **Unified Integration** | End-to-end hybrid video-in-the-loop pipeline, non-blocking asynchronous REST server, and surveillance visualizer | [`src/hybrid.py`](src/hybrid.py), [`src/server.py`](src/server.py), [`server.py`](server.py), [`web_visualizer/visualizer.html`](web_visualizer/visualizer.html) | `python main.py --mode hybrid --max-steps 100`<br>`python main.py --mode server --port 8000` |
 
 ---
 
@@ -37,9 +37,9 @@ The project encompasses all five core modules of the academic Deep Learning curr
 ```mermaid
 flowchart TD
     subgraph S1["Module 3: Computer Vision Pipeline"]
-        V[Real-World Traffic Video / Camera Feed] --> VD[SSDLite / YOLO Vehicle Detector]
-        VD --> TRK[Centroid & IOU Tracker<br>IDs, Velocity, Dwell Time]
-        TRK --> ROI[4-Approach ROIs: North, South, East, West]
+        V[Real-World Traffic Video / Camera Feed] --> VD[SSDLite / YOLO Detector<br>2x2 Overlap Tiles & IoU NMS]
+        VD --> TRK[Centroid Tracker & Motion Filter<br>Moving vs. Parked Vehicles]
+        TRK --> ROI[Directional Approach ROIs<br>North, South, East, West]
         V --> GRID[32x32 Spatial Occupancy Grid]
         GRID --> CNN[Custom PyTorch CNN<br>Conv2d + BatchNorm2d + MaxPool2d]
         ROI --> ADAPT[VisionToStateAdapter<br>EMA Smoothing alpha=0.35]
@@ -58,7 +58,7 @@ flowchart TD
     subgraph S3["Module 4 & RL Control"]
         ADAPT --> S7D["Standard 7-D State Interface<br>[q_N, q_S, q_E, q_W, N_tot, p_NS, p_EW]"]
         S7D --> GRU[Temporal Predictor<br>LSTM / GRU Forecasting]
-        S7D --> RL[RL Policy / DQN Agent<br>min_green=3 Constraint]
+        S7D --> RL[RL Policy / Actuated Engine<br>min_green=3 Constraint]
         RL --> ACT[Phase Recommendation<br>Action 0: NS Green | Action 1: EW Green]
     end
 
@@ -111,12 +111,19 @@ python server.py --port 8000
 *Open in browser:* `http://localhost:8000/web_visualizer/visualizer.html`  
 *Features:* Drag-and-drop or upload any real traffic video from your computer, view real vehicle bounding boxes with confidence scores and persistent tracking IDs, observe real-time 32×32 occupancy grid heatmaps, and watch the 4-way intersection adapt to the AI signal recommendation!
 
+- **Non-Blocking Background Processing:** The upload handler (`POST /api/process_video` or `POST /api/upload_and_process`) saves the raw video, starts a daemon background job thread, and immediately returns `{"started": true}`. The frontend visualizer polls `GET /api/status` every 1.5s to display live job state (`idle`, `preparing`, `analyzing`, `done`, `error`) and progress (0–100%).
+- **Concurrency Guard:** Only one background job runs at a time; if an analysis is in progress, duplicate uploads are safely rejected with `{"started": false}`. The server uses Python's `ThreadingHTTPServer` so status polling and telemetry requests remain fully responsive during inference.
+- **Video Preprocessing & Normalization:** Uploaded videos are normalized prior to inference by `prepare_video()`: downscaled to $\le 1920$ px width (preserving aspect ratio and even dimensions), duration capped at 20 seconds, resampled to $\sim 15$ fps via frame skipping, and written to `uploads/prepared.mp4` using the `mp4v` codec.
+- **Actuated Signal Decisions & Debug Previews:** Real-world uploads trigger actuated signal control with minimum green durations (`min_green=3`) and export annotated debug verification frames every 10 steps to `uploads/debug/` (green boxes for moving vehicles, gray for parked, with intersection radius and counts drawn).
+- **Startup Cleanup:** On server launch, old temporary files in `uploads/` older than 1 hour and the `uploads/debug/` folder are automatically purged.
+
 ### 2. Hybrid Pipeline (CLI Mode)
 Executes the unified vision-in-the-loop pipeline from the command line: ingests surveillance video, runs detector + tracker + custom CNN, adapts to 7-D state, performs VAE incident monitoring, forecasts queues with GRU, evaluates the RL policy, and exports real-time dashboard telemetry.
 ```bash
 python main.py --mode hybrid --video-path results/sample_traffic.mp4 --max-steps 100
 ```
-*Generated output:* `results/hybrid_rollout.json` and `web_visualizer/rollout_data.js`.
+*Generated output:* `results/hybrid_rollout.json` and `web_visualizer/rollout_data.js`.  
+*CLI options:* Supports `stride_override` (e.g., stride 2 for uploads), `resize_width` (downscales frames exceeding width), `progress_callback` (mapped to 20–100% progress), and periodic console telemetry (`[Hybrid ATMS] frame i/total` every 20 frames).
 
 ### 2. Train Custom PyTorch CNN (Module 3)
 Trains the 3-layer `CustomTrafficCNN` on 64×64 spatial occupancy grids to estimate multi-approach vehicle density:
@@ -168,6 +175,9 @@ python main.py --mode supervised --epochs 10 --batch-size 32
 
 ### Module 3: Computer Vision & Spatial CNN
 - **Detection & Tracking:** Uses Torchvision `ssdlite320_mobilenet_v3_large` (with morphological color-fallback) to detect vehicles. Detections feed into `CentroidTracker` which computes centroid displacement, bounding box IOU, persistent track IDs, instant velocity ($px/\Delta t$), and dwell time.
+- **Tiled High-Resolution Inference:** In addition to standard single-frame inference, `detect_objects_tiled()` splits high-resolution and aerial frames into $2 \times 2$ overlapping tiles with 15% overlap and a 0.30 score threshold. Bounding boxes are re-mapped to full-frame coordinates and merged using greedy IoU Non-Maximum Suppression (`_nms_boxes`, IoU threshold 0.5) to capture small, top-down vehicles.
+- **Motion Classification & Parked-Car Filtering:** `classify_track_motion()` evaluates cumulative track displacement over trajectory history. A vehicle is classified as moving only if its net displacement exceeds 1.5% of the frame width (`move_thresh_frac=0.015`). Stationary vehicles parked along road edges or lots are excluded from approach queues.
+- **Directional Approach ROIs:** `assign_approach_by_direction()` assigns moving vehicles to North, South, East, or West based on their dominant trajectory vector ($\Delta x$ vs. $\Delta y$) toward the intersection center within a radial perimeter ($r = 0.45 \times \min(w, h)$), filtering out extraneous background parking lots.
 - **Custom PyTorch CNN Architecture:**
   - `Conv2d(1, 16, kernel_size=3, padding=1)` $\rightarrow$ `BatchNorm2d(16)` $\rightarrow$ `ReLU` $\rightarrow$ `MaxPool2d(2, 2)`
   - `Conv2d(16, 32, kernel_size=3, padding=1)` $\rightarrow$ `BatchNorm2d(32)` $\rightarrow$ `ReLU` $\rightarrow$ `MaxPool2d(2, 2)`
@@ -202,16 +212,17 @@ python main.py --mode supervised --epochs 10 --batch-size 32
   - Rebalanced flow dynamics: Inflow $\sim \mathcal{U}(0, 0.8)$, green discharge rate $0.8$ veh/step, ensuring active lane clearance.
   - Revised reward function: $R = -\text{avg\_queue} - 0.05 \times \text{max\_queue}$, preventing lane starvation.
   - Action distribution post-fix: Balanced across both phases (e.g., 51% Phase 0, 49% Phase 1 in evaluation rollouts).
+- **Actuated Signal Logic for Video Uploads:** When processing arbitrary uploaded videos (`upload_mode=True`), the pipeline computes signal phases from observed approach traffic (allocating green to the approach pair with higher queue demand: North-South vs. East-West) while enforcing the strict minimum green duration constraint (`_ACT_MIN_GREEN=3`), count-proportional policy confidence, and zero conflicting greens.
 
 ---
 
 ## 🖥️ Unified Surveillance Dashboard
 
-The web visualizer (`web_visualizer/visualizer.html`) provides a dark-mode 4-section surveillance console:
+The web visualizer (`web_visualizer/visualizer.html`) provides a modern surveillance console styled with light pastel lavender and warm beige surfaces, high-contrast crisp white typography on dark viewports, and fluid CSS animations:
 1. **Section 1: Real-Time Traffic Monitoring**  
-   Video canvas with bounding boxes, persistent track IDs, dynamic ROI approach counters, and an interactive 32×32 spatial occupancy grid heatmap.
+   Video canvas with bounding boxes, persistent track IDs, dynamic ROI approach counters, non-blocking upload progress bar, and an interactive 32×32 spatial occupancy grid heatmap.
 2. **Section 2: Autonomous Signal Management**  
-   Four distinct signal heads (North, South, East, West) with active color states, queue height bars, AI phase recommendations, and policy probability gauges.
+   Four distinct signal heads (North, South, East, West) with active color states, animated pulses, queue height bars, AI phase recommendations, and policy probability gauges.
 3. **Section 3: Incident Management & Safety**  
    Real-time VAE reconstruction error gauge, status indicator (**NORMAL**, **WARNING**, **CRITICAL: Critical Traffic Anomaly — Investigation Required**), and a timestamped incident event log.
 4. **Section 4: Performance Analytics**  
@@ -226,6 +237,7 @@ Autonomous-Traffic-Monitoring-and-Incident-Management-System/
 ├── README.md                          # Comprehensive system documentation
 ├── requirements.txt                   # Project dependencies (Torch, OpenCV, etc.)
 ├── main.py                            # Master CLI entry point
+├── server.py                          # Standalone ATMS server launcher
 ├── src/
 │   ├── env.py                         # 4-way intersection simulation environment
 │   ├── model.py                       # MLP policy & Q-network architectures
@@ -238,7 +250,8 @@ Autonomous-Traffic-Monitoring-and-Incident-Management-System/
 │   ├── gan.py                         # Conditional Sequence GAN & validation gate
 │   ├── vae.py                         # Sequence Beta-VAE & incident anomaly detector
 │   ├── temporal.py                    # LSTM/GRU temporal queue forecaster
-│   └── hybrid.py                      # End-to-end hybrid surveillance pipeline
+│   ├── hybrid.py                      # End-to-end hybrid surveillance pipeline
+│   └── server.py                      # ThreadingHTTPServer, REST API & video prep
 ├── models/
 │   ├── custom_cnn.pt                  # Trained Custom CNN weights
 │   ├── sequence_gan.pt                # Trained Sequence GAN weights
@@ -249,8 +262,11 @@ Autonomous-Traffic-Monitoring-and-Incident-Management-System/
 │   ├── hybrid_rollout.json            # 100-step hybrid rollout telemetry
 │   ├── rl_comparison.png              # Benchmark evaluation plot
 │   └── supervised_comparison.png      # Supervised performance plot
+├── uploads/
+│   ├── prepared.mp4                   # Normalized video for fast inference
+│   └── debug/                         # Annotated debug frames (moving vs parked)
 └── web_visualizer/
-    ├── visualizer.html                # Dark-themed surveillance web dashboard
+    ├── visualizer.html                # Surveillance web dashboard
     └── rollout_data.js                # Auto-injected simulation & vision data
 ```
 
