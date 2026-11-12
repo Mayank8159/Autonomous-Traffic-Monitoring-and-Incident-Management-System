@@ -1085,8 +1085,8 @@ def run_e2e_tests():
         assert os.path.exists(shot_fluid) and os.path.getsize(shot_fluid) > 20000
         print(f"[PASS] Fluid queue discharge screenshot saved to {shot_fluid} ({os.path.getsize(shot_fluid)} bytes)", flush=True)
 
-        # 7.12 Live Fleet Demand-Driven AI Probe: ZERO blank-road green > 2.0s while another arm waits
-        print("\n[E2E] Verifying Demand-Driven AI (no blank-road green > 2.0s while another arm waits, <=1 open arm, >=26px separation)...", flush=True)
+        # 7.12 Live Fleet Demand-Driven AI & Zero Mid-Road Stops Probe
+        print("\n[E2E] Verifying Demand-Driven AI & ZERO unexplained mid-road stops (12s live probe)...", flush=True)
         page.evaluate("() => resetCitySimulation()")
         page.wait_for_timeout(400)
 
@@ -1095,8 +1095,11 @@ def run_e2e_tests():
         live_invariant_violations = []
         empty_arm_ai_wins = 0
         probe_min_dist = 9999.0
+        total_stopped_checked = 0
+        unexplained_stop_streaks = {}
+        persistent_unexplained_stops = []
 
-        for sample_idx in range(36):
+        for sample_idx in range(48):
             probe = page.evaluate("""() => {
                 const nowMs = performance.now();
                 const demands = computeApproachDemands();
@@ -1141,13 +1144,138 @@ def run_e2e_tests():
                     }
                 }
 
-                return { nowMs, juncs, invViolations, emptyWins, minDist };
+                // Validate every stopped non-emergency vehicle chains back to a red/amber/yield stop bar or active incident
+                const validMemo = new Map();
+                const visiting = new Set();
+                function isValidStop(v) {
+                    if (validMemo.has(v.id)) return validMemo.get(v.id);
+                    if (visiting.has(v.id)) return { ok: false, reason: "cycle" };
+                    visiting.add(v.id);
+
+                    let res = { ok: false, reason: "unexplained_mid_road" };
+                    if (v.state === "TURNING") {
+                        const tc = v.turnCurve;
+                        const tLook = Math.min(1.0, (v.turnProgress || 0) + 0.18);
+                        const lookPt = tc ? evalCurvePoint(tc, tLook) : { x: v.x, y: v.y };
+                        const blocker = vehicles.find(o => o.id !== v.id && o.speed < 0.05 && (Math.hypot(o.x - lookPt.x, o.y - lookPt.y) < 32 || Math.hypot(o.x - v.x, o.y - v.y) < 32));
+                        if (blocker) {
+                            const br = isValidStop(blocker);
+                            res = br.ok ? { ok: true, reason: "turning_behind_valid_stop" } : { ok: false, reason: "turning_behind_invalid:" + br.reason };
+                        } else {
+                            res = { ok: false, reason: "turning_stalled_no_stopped_blocker" };
+                        }
+                        visiting.delete(v.id);
+                        validMemo.set(v.id, res);
+                        return res;
+                    }
+
+                    const corr = CORRIDORS[v.corridorId];
+                    if (!corr) {
+                        visiting.delete(v.id);
+                        return { ok: false, reason: "no_corridor" };
+                    }
+
+                    if (v.nextIntersection) {
+                        const junc = INTERSECTIONS[v.nextIntersection];
+                        const distToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
+                        const stopLineDist = distToCenter - 38;
+                        const sig = getApproachSignal(v.nextIntersection, getVehicleApproachDir(v));
+                        if (stopLineDist <= 5.0 && distToCenter >= 32.0) {
+                            if (sig !== "green") {
+                                res = { ok: true, reason: "red_amber_stop_bar" };
+                                visiting.delete(v.id);
+                                validMemo.set(v.id, res);
+                                return res;
+                            }
+                            const hasYieldTarget = vehicles.some(o => o.id !== v.id && Math.abs(o.x - junc.x) < 34 && Math.abs(o.y - junc.y) < 34 && (o.state === "TURNING" || (o.corridorId !== v.corridorId && o.speed > 0.04)));
+                            if (hasYieldTarget) {
+                                res = { ok: true, reason: "yield_stop_bar" };
+                                visiting.delete(v.id);
+                                validMemo.set(v.id, res);
+                                return res;
+                            }
+                        }
+                    }
+
+                    const incAhead = activeIncidents.some(inc => {
+                        const fwdInc = corr.isHorizontal ? (inc.x - v.x) * v.direction : (inc.y - v.y) * v.direction;
+                        const latInc = corr.isHorizontal ? Math.abs(inc.y - v.y) : Math.abs(inc.x - v.x);
+                        return fwdInc > 0 && fwdInc <= 55 && latInc < 22;
+                    });
+                    if (incAhead) {
+                        res = { ok: true, reason: "incident_ahead" };
+                        visiting.delete(v.id);
+                        validMemo.set(v.id, res);
+                        return res;
+                    }
+
+                    let lead = null;
+                    let minLeadDist = 9999;
+                    for (const o of vehicles) {
+                        if (o.id === v.id || o.corridorId !== v.corridorId || o.direction !== v.direction) continue;
+                        const d = corr.isHorizontal ? (o.x - v.x) * v.direction : (o.y - v.y) * v.direction;
+                        if (d > 0 && d < minLeadDist) {
+                            minLeadDist = d;
+                            lead = o;
+                        }
+                    }
+                    if (lead && minLeadDist <= 34.0) {
+                        if (lead.speed >= 0.05) {
+                            res = { ok: false, reason: "frozen_behind_moving_lead", leadId: lead.id, leadSpeed: lead.speed, minLeadDist };
+                        } else {
+                            const lr = isValidStop(lead);
+                            res = lr.ok ? { ok: true, reason: "queued->" + lr.reason } : { ok: false, reason: "queued_behind_invalid:" + lr.reason };
+                        }
+                    } else if (v.nextIntersection) {
+                        const junc = INTERSECTIONS[v.nextIntersection];
+                        const distToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
+                        const stopLineDist = distToCenter - 38;
+                        if (stopLineDist > 5.0 && stopLineDist < 60.0) {
+                            res = { ok: false, reason: "frozen_short_of_stop_line", stopLineDist, minLeadDist };
+                        }
+                    }
+                    visiting.delete(v.id);
+                    validMemo.set(v.id, res);
+                    return res;
+                }
+
+                const stoppedList = vehicles.filter(v => !v.isEmergency && v.speed < 0.05 && !(v.state === "CRUISING" && v.accel > 0.01));
+                const unexplainedStops = [];
+                for (const v of stoppedList) {
+                    const check = isValidStop(v);
+                    if (!check.ok) {
+                        unexplainedStops.push({
+                            id: v.id,
+                            state: v.state,
+                            corridorId: v.corridorId,
+                            direction: v.direction,
+                            x: v.x,
+                            y: v.y,
+                            speed: v.speed,
+                            accel: v.accel,
+                            nextIntersection: v.nextIntersection,
+                            ...check
+                        });
+                    }
+                }
+
+                return { nowMs, juncs, invViolations, emptyWins, minDist, stoppedCount: stoppedList.length, unexplainedStops };
             }""")
 
             now_s = probe["nowMs"] / 1000.0
             live_invariant_violations.extend(probe["invViolations"])
             empty_arm_ai_wins += probe["emptyWins"]
             probe_min_dist = min(probe_min_dist, probe["minDist"])
+            total_stopped_checked += probe["stoppedCount"]
+
+            curr_bad_ids = {item["id"]: item for item in probe["unexplainedStops"]}
+            for vid in list(unexplained_stop_streaks.keys()):
+                if vid not in curr_bad_ids:
+                    del unexplained_stop_streaks[vid]
+            for vid, item in curr_bad_ids.items():
+                unexplained_stop_streaks[vid] = unexplained_stop_streaks.get(vid, 0) + 1
+                if unexplained_stop_streaks[vid] >= 2:
+                    persistent_unexplained_stops.append(item)
 
             for jid, jinfo in probe["juncs"].items():
                 if jinfo["isBlankGreenWithWaiting"]:
@@ -1160,12 +1288,14 @@ def run_e2e_tests():
 
             page.wait_for_timeout(250)
 
-        print(f"[E2E] Demand-driven probe: max blank-road green={max_blank_green_sec:.2f}s, empty-arm AI wins={empty_arm_ai_wins}, min separation={probe_min_dist:.2f}px", flush=True)
+        print(f"[E2E] Demand-driven & mid-road stop probe: max blank-road green={max_blank_green_sec:.2f}s, empty-arm AI wins={empty_arm_ai_wins}, min separation={probe_min_dist:.2f}px, stopped obs checked={total_stopped_checked}, persistent unexplained stops={len(persistent_unexplained_stops)}", flush=True)
         assert len(live_invariant_violations) == 0, f"<=1 open arm invariant violated during live probe: {live_invariant_violations}"
         assert empty_arm_ai_wins == 0, f"AI selected an empty arm {empty_arm_ai_wins} times!"
         assert max_blank_green_sec <= 2.0, f"Junction held blank-road green for {max_blank_green_sec:.2f}s (> 2.0s) while another arm had waiting vehicles!"
         assert probe_min_dist >= 26.0, f"Inter-vehicle overlap detected during live probe: {probe_min_dist:.2f}px < 26.0px"
-        print("[PASS] Live demand-driven AI verified: 0 blank-road greens > 2.0s, 0 empty-arm wins, <=1 open arm, >=26px separation.", flush=True)
+        assert total_stopped_checked > 0, "Expected stopped queued vehicles during 12s live probe to validate queue chaining!"
+        assert len(persistent_unexplained_stops) == 0, f"Persistent unexplained mid-road stops detected: {persistent_unexplained_stops}"
+        print("[PASS] Live demand-driven AI & zero unexplained mid-road stops verified across all queued/cruising/turning vehicles.", flush=True)
 
         # 7.13 Standby All-Red on Empty Map + Instant Green Wake-Up on Vehicle Arrival
         print("\n[E2E] Verifying Standby All-Red when empty & instant GREEN wake-up on vehicle arrival...", flush=True)
@@ -1339,6 +1469,73 @@ def run_e2e_tests():
         assert jump_res["visitedArms"] == ["N", "W"], f"Expected non-sequential jump ['N', 'W'] (no S/E cycling), got {jump_res['visitedArms']}"
         assert jump_res["finalSignals"] == {"N": "red", "S": "red", "E": "red", "W": "green"}, f"Expected W GREEN, got {jump_res['finalSignals']}"
         print("[PASS] Instant Gap-Out & Non-Sequential Jump verified: N -> amber -> all-red -> W (skipped S/E).", flush=True)
+
+        # 7.15 Deterministic Mid-Road Stop Regressions: Stop-Bar Pull-Up & Moving-Lead Separation
+        print("\n[E2E] Verifying deterministic mid-road stop regressions (stop-bar pull-up & moving-lead separation)...", flush=True)
+        det_stop_res = page.evaluate("""() => {
+            // Case A: Vehicle approaching red signal from 110px upstream must pull all the way to 38px stop bar (not freeze 25-35px short)
+            vehicles = [];
+            activeIncidents = [];
+            emergencyPreemptionCorridor = [];
+            const j2 = INTERSECTIONS["INT_2"];
+            const st2 = junctionStates["INT_2"];
+            st2.manualOverride = "N";
+            st2.isStandby = false;
+            st2.isAllRed = false;
+            st2.isAmber = false;
+            st2.activeArm = "N";
+            st2.signals = { N: "green", S: "red", E: "red", W: "red" };
+
+            const vPull = {
+                id: 9981, type: "sedan", color: "#3b82f6",
+                corridorId: "H1", direction: 1,
+                x: j2.x - 110, y: CORRIDORS["H1"].y + 16,
+                speed: 0.9, accel: 0, targetSpeed: 1.0, heading: 0,
+                length: 20, isBraking: false, isEmergency: false,
+                state: "CRUISING", nextIntersection: "INT_2"
+            };
+            vehicles.push(vPull);
+            for (let k = 0; k < 240; k++) {
+                updateVehicles(1 / 60);
+            }
+            const stopLineDist = (j2.x - vPull.x) - 38;
+            const pullSpeed = vPull.speed;
+
+            // Case B: Trailing vehicle within 27px of a moving lead vehicle must NOT be hard-zeroed by Pass 7/8
+            vehicles = [];
+            st2.manualOverride = "W";
+            st2.signals = { N: "red", S: "red", E: "red", W: "green" };
+            const lead = {
+                id: 9982, type: "bus", color: "#f59e0b",
+                corridorId: "H1", direction: 1,
+                x: 240, y: CORRIDORS["H1"].y + 16,
+                speed: 0.55, accel: 0.02, targetSpeed: 0.9, heading: 0,
+                length: 34, isBraking: false, isEmergency: false,
+                state: "CRUISING", nextIntersection: "INT_2"
+            };
+            const trail = {
+                id: 9983, type: "sedan", color: "#3b82f6",
+                corridorId: "H1", direction: 1,
+                x: 213, y: CORRIDORS["H1"].y + 16,
+                speed: 0.55, accel: 0.0, targetSpeed: 1.0, heading: 0,
+                length: 20, isBraking: false, isEmergency: false,
+                state: "CRUISING", nextIntersection: "INT_2"
+            };
+            vehicles.push(lead, trail);
+            updateVehicles(1 / 60);
+            const trailSpeedAfter = trail.speed;
+            const gapAfter = lead.x - trail.x;
+
+            resetCitySimulation();
+            return { stopLineDist, pullSpeed, trailSpeedAfter, gapAfter };
+        }""")
+        page.wait_for_timeout(300)
+
+        assert abs(det_stop_res["stopLineDist"]) <= 1.0 and det_stop_res["pullSpeed"] == 0.0, \
+            f"Vehicle froze short of red stop bar instead of pulling up to 38px: {det_stop_res}"
+        assert det_stop_res["trailSpeedAfter"] > 0.05 and det_stop_res["gapAfter"] >= 27.9, \
+            f"Trailing vehicle frozen behind moving lead car by Pass 7/8: {det_stop_res}"
+        print(f"[PASS] Deterministic mid-road regressions verified: stopLineDist={det_stop_res['stopLineDist']:.2f}px, moving-lead trailSpeed={det_stop_res['trailSpeedAfter']:.3f}.", flush=True)
 
         # Check Console Errors, Uncaught Page Exceptions, and Failed Network Requests
         print(f"\n[E2E] Total console logs recorded: {len(console_logs)}", flush=True)
