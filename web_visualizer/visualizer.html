@@ -1150,23 +1150,23 @@
                     </div>
                     <div class="queue-approach-row">
                         <span class="approach-tag">North</span>
-                        <div class="queue-bar-track"><div class="queue-bar-fill" id="barQNorth" style="width:25%;"></div></div>
-                        <span class="queue-num" id="valQNorth">4.2</span>
+                        <div class="queue-bar-track"><div class="queue-bar-fill" id="barQNorth" style="width:0%;"></div></div>
+                        <span class="queue-num" id="valQNorth">0.0</span>
                     </div>
                     <div class="queue-approach-row">
                         <span class="approach-tag">South</span>
-                        <div class="queue-bar-track"><div class="queue-bar-fill" id="barQSouth" style="width:30%;"></div></div>
-                        <span class="queue-num" id="valQSouth">5.1</span>
+                        <div class="queue-bar-track"><div class="queue-bar-fill" id="barQSouth" style="width:0%;"></div></div>
+                        <span class="queue-num" id="valQSouth">0.0</span>
                     </div>
                     <div class="queue-approach-row">
                         <span class="approach-tag">East</span>
-                        <div class="queue-bar-track"><div class="queue-bar-fill" id="barQEast" style="width:18%;"></div></div>
-                        <span class="queue-num" id="valQEast">2.9</span>
+                        <div class="queue-bar-track"><div class="queue-bar-fill" id="barQEast" style="width:0%;"></div></div>
+                        <span class="queue-num" id="valQEast">0.0</span>
                     </div>
                     <div class="queue-approach-row">
                         <span class="approach-tag">West</span>
-                        <div class="queue-bar-track"><div class="queue-bar-fill" id="barQWest" style="width:40%;"></div></div>
-                        <span class="queue-num" id="valQWest">6.4</span>
+                        <div class="queue-bar-track"><div class="queue-bar-fill" id="barQWest" style="width:0%;"></div></div>
+                        <span class="queue-num" id="valQWest">0.0</span>
                     </div>
                 </div>
 
@@ -1179,23 +1179,23 @@
                     <div class="signal-heads-row">
                         <div class="signal-head-box">
                             <span style="font-size:9.5px; font-weight:750; color:var(--text-dim);">NORTH</span>
-                            <div class="signal-head-light" id="indLightN"></div>
-                            <span style="font-size:9px; font-weight:700;" id="txtLightN">RED</span>
+                            <div class="signal-head-light green" id="indLightN"></div>
+                            <span style="font-size:9px; font-weight:700;" id="txtLightN">GREEN</span>
                         </div>
                         <div class="signal-head-box">
                             <span style="font-size:9.5px; font-weight:750; color:var(--text-dim);">SOUTH</span>
-                            <div class="signal-head-light" id="indLightS"></div>
+                            <div class="signal-head-light red" id="indLightS"></div>
                             <span style="font-size:9px; font-weight:700;" id="txtLightS">RED</span>
                         </div>
                         <div class="signal-head-box">
                             <span style="font-size:9.5px; font-weight:750; color:var(--text-dim);">EAST</span>
-                            <div class="signal-head-light" id="indLightE"></div>
-                            <span style="font-size:9px; font-weight:700;" id="txtLightE">GREEN</span>
+                            <div class="signal-head-light red" id="indLightE"></div>
+                            <span style="font-size:9px; font-weight:700;" id="txtLightE">RED</span>
                         </div>
                         <div class="signal-head-box">
                             <span style="font-size:9.5px; font-weight:750; color:var(--text-dim);">WEST</span>
-                            <div class="signal-head-light" id="indLightW"></div>
-                            <span style="font-size:9px; font-weight:700;" id="txtLightW">GREEN</span>
+                            <div class="signal-head-light red" id="indLightW"></div>
+                            <span style="font-size:9px; font-weight:700;" id="txtLightW">RED</span>
                         </div>
                     </div>
                 </div>
@@ -1203,17 +1203,19 @@
                 <!-- Neural Network Inference Telemetry -->
                 <div class="inspector-card">
                     <div class="inspector-title">
-                        <span>RL Policy Forward Pass</span>
+                        <span>RL Policy Forward Pass (4-Arm)</span>
                         <span style="font-size:9.5px; color:var(--accent-cyan); font-family:monospace;" id="aiLatencyBadge">&lt; 0.05ms</span>
                     </div>
-                    <div style="font-size:12px; font-weight:700; color:var(--accent-cyan);" id="aiRecText">Action 1: East-West Green</div>
-                    <div style="font-size:11px; color:var(--text-muted);" id="aiConfText">Confidence: NS 12% | EW 88%</div>
+                    <div style="font-size:12px; font-weight:700; color:var(--accent-cyan);" id="aiRecText">Active Signal: North Green</div>
+                    <div style="font-size:10.5px; color:var(--text-muted);" id="aiConfText">Arm Scores: N 25% | S 25% | E 25% | W 25%</div>
                     <div style="display:flex; height:6px; background:var(--bg-inset); border-radius:9999px; overflow:hidden; margin-top:2px;">
-                        <div id="aiBarNS" style="width:12%; background:var(--accent-cyan); transition:width 0.2s;"></div>
-                        <div id="aiBarEW" style="width:88%; background:var(--accent-purple); transition:width 0.2s;"></div>
+                        <div id="aiBarN" style="width:25%; background:var(--accent-cyan); transition:width 0.2s;"></div>
+                        <div id="aiBarS" style="width:25%; background:var(--accent-lime); transition:width 0.2s;"></div>
+                        <div id="aiBarE" style="width:25%; background:var(--accent-amber); transition:width 0.2s;"></div>
+                        <div id="aiBarW" style="width:25%; background:var(--accent-purple); transition:width 0.2s;"></div>
                     </div>
                     <div style="font-size:9.5px; color:var(--text-dim); font-family:monospace; margin-top:4px;" id="aiTensorText">
-                        State: [4.2, 5.1, 2.9, 6.4, 18.6, 0.0, 1.0]
+                        State: [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0] | Wait: N:0s S:0s E:0s W:0s
                     </div>
                 </div>
 
@@ -1234,13 +1236,15 @@
                 <!-- Manual Signal Actuation Overrides -->
                 <div class="inspector-card">
                     <div class="inspector-title">
-                        <span>Manual Actuation Override</span>
+                        <span>Manual Actuation Override (1-Arm)</span>
                     </div>
-                    <div style="display:flex; gap:6px;">
-                        <button class="btn" style="flex:1; font-size:10.5px;" onclick="overrideJunctionSignal(selectedJunctionId, 0)">Force NS Green</button>
-                        <button class="btn" style="flex:1; font-size:10.5px;" onclick="overrideJunctionSignal(selectedJunctionId, 1)">Force EW Green</button>
-                        <button class="btn danger" style="font-size:10.5px;" onclick="clearJunctionOverride(selectedJunctionId)">AI Auto</button>
+                    <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:5px; margin-bottom:6px;">
+                        <button class="btn" id="btnOverrideN" style="font-size:10.5px; padding:6px 4px;" onclick="overrideJunctionSignal(selectedJunctionId, 'N')">Force N</button>
+                        <button class="btn" id="btnOverrideS" style="font-size:10.5px; padding:6px 4px;" onclick="overrideJunctionSignal(selectedJunctionId, 'S')">Force S</button>
+                        <button class="btn" id="btnOverrideE" style="font-size:10.5px; padding:6px 4px;" onclick="overrideJunctionSignal(selectedJunctionId, 'E')">Force E</button>
+                        <button class="btn" id="btnOverrideW" style="font-size:10.5px; padding:6px 4px;" onclick="overrideJunctionSignal(selectedJunctionId, 'W')">Force W</button>
                     </div>
+                    <button class="btn danger" id="btnOverrideAuto" style="width:100%; font-size:10.5px;" onclick="clearJunctionOverride(selectedJunctionId)">AI Auto (4-Arm RL)</button>
                 </div>
             </div>
 
@@ -1452,36 +1456,64 @@
         const VEHICLE_COLORS = ["#38bdf8", "#f59e0b", "#e2e8f0", "#a855f7", "#ec4899", "#10b981", "#ef4444", "#facc15", "#64748b"];
 
         // Intersection State Machine for 24 Traffic Lights
-        // (4 approaches per intersection: North, South, East, West)
-        let junctionStates = {};
-        for (const [id, data] of Object.entries(INTERSECTIONS)) {
-            const jNum = parseInt(id.replace("INT_", "")) || 0;
-            const initPhase = (jNum % 2 === 0) ? 0 : 1;
-            junctionStates[id] = {
+        // True 4-way single-approach mutual exclusion: at most ONE of N, S, E, W is green or amber at any moment
+        const APPROACH_DIRS = ["N", "S", "E", "W"];
+        const APPROACH_LABELS = { N: "North", S: "South", E: "East", W: "West" };
+
+        function createInitialJunctionState(id, jNum) {
+            const initArm = APPROACH_DIRS[Math.max(0, jNum - 1) % 4];
+            const initPhase = (initArm === "N" || initArm === "S") ? 0 : 1;
+            const signals = { N: "red", S: "red", E: "red", W: "red" };
+            signals[initArm] = "green";
+            return {
                 id: id,
-                queues: [3.5 + Math.random() * 2, 3.8 + Math.random() * 2, 2.5 + Math.random() * 2, 2.8 + Math.random() * 2], // N, S, E, W
-                signals: {
-                    N: initPhase === 0 ? "green" : "red",
-                    S: initPhase === 0 ? "green" : "red",
-                    E: initPhase === 1 ? "green" : "red",
-                    W: initPhase === 1 ? "green" : "red"
-                },
-                phase: initPhase, // 0 = NS Green (EW Red), 1 = EW Green (NS Red)
+                queues: [0, 0, 0, 0], // N, S, E, W coupled dynamically to canvas vehicles
+                signals: signals,
+                activeArm: initArm,    // 'N' | 'S' | 'E' | 'W'
+                targetArm: initArm,
+                armWaitTimes: { N: 0, S: 0, E: 0, W: 0 },
+                armScores: { N: 0.25, S: 0.25, E: 0.25, W: 0.25 },
+                armLogits: { N: 0, S: 0, E: 0, W: 0 },
+                phase: initPhase, // backward-compat axis index: 0 = NS, 1 = EW
                 targetPhase: initPhase,
-                phaseTime: 2.0 + (jNum % 5) * 1.5, // elapsed seconds in current phase
-                minGreen: 9.0 + (jNum % 4) * 1.0, // 9.0 to 12.0 seconds minimum green holding time
+                phaseTime: 1.5 + (jNum % 4) * 1.2, // elapsed sim-seconds in current active green
+                minGreen: 8.5 + (jNum % 4) * 0.5,  // 8.5 to 10.0 seconds minimum green holding time
                 amberDuration: 3.2, // 3.0 to 3.5s yellow transition
                 allRedDuration: 1.8, // 1.5 to 2.0s all-red clearance interval
                 isAmber: false,
                 amberTimer: 0,
                 isAllRed: false,
                 allRedTimer: 0,
-                nextInferenceTimer: 0.2 + (jNum % 5) * 0.2, // periodic RL evaluation (every 1.0s)
-                manualOverride: null, // null | 0 | 1 | "N" | "S" | "E" | "W"
+                allRedExtraWait: 0,
+                nextInferenceTimer: 0.2 + (jNum % 4) * 0.2,
+                manualOverride: null, // null | "N" | "S" | "E" | "W"
                 lastModelAction: initPhase,
-                lastModelProbs: [0.5, 0.5],
+                lastModelArm: initArm,
+                lastModelProbs: [0.25, 0.25, 0.25, 0.25],
+                lastAxisProbs: [0.5, 0.5],
                 lastInferenceTime: 0.02
             };
+        }
+
+        function enforceSingleSignalInvariant(state) {
+            if (!state) return;
+            if (!state.signals) state.signals = { N: "red", S: "red", E: "red", W: "red" };
+            if (state.isAllRed) {
+                for (const d of APPROACH_DIRS) state.signals[d] = "red";
+                return;
+            }
+            const active = APPROACH_DIRS.includes(state.activeArm) ? state.activeArm : "N";
+            state.activeArm = active;
+            const activeCol = state.isAmber ? "amber" : "green";
+            for (const d of APPROACH_DIRS) {
+                state.signals[d] = (d === active) ? activeCol : "red";
+            }
+        }
+
+        let junctionStates = {};
+        for (const [id, data] of Object.entries(INTERSECTIONS)) {
+            const jNum = parseInt(id.replace("INT_", "")) || 1;
+            junctionStates[id] = createInitialJunctionState(id, jNum);
         }
 
         // Approach direction helper:
@@ -1508,19 +1540,18 @@
                 return state.signals[approachDir];
             }
             if (state.isAllRed) return "red";
-            const isHoriz = (approachDir === "E" || approachDir === "W");
-            if (isHoriz) {
-                return (state.phase === 1) ? (state.isAmber ? "amber" : "green") : "red";
-            } else {
-                return (state.phase === 0) ? (state.isAmber ? "amber" : "green") : "red";
-            }
+            const active = APPROACH_DIRS.includes(state.activeArm) ? state.activeArm : "N";
+            return (approachDir === active) ? (state.isAmber ? "amber" : "green") : "red";
         }
 
-        // Authoritative signal color resolver: handles Green, Amber, All-Red Clearance
-        // 100% backward compatible with 2-phase callers and automated tests
+        // Authoritative axis signal resolver (backward compatible with legacy callers)
         function getJunctionSignal(state, isHorizontal) {
             if (!state) return "red";
-            return getApproachSignal(state, isHorizontal ? "W" : "N");
+            const arms = isHorizontal ? ["W", "E"] : ["N", "S"];
+            const cols = arms.map(a => getApproachSignal(state, a));
+            if (cols.includes("green")) return "green";
+            if (cols.includes("amber")) return "amber";
+            return "red";
         }
 
         /* =========================================================================
@@ -1594,12 +1625,87 @@
             if (!state) return [0, 0, 0, 0, 0, 1.0, 0.0];
             const qs = state.queues || [0, 0, 0, 0];
             const totalQ = qs[0] + qs[1] + qs[2] + qs[3];
+            const isNS = (state.activeArm === "N" || state.activeArm === "S" || state.phase === 0);
             return [
                 qs[0], qs[1], qs[2], qs[3],
                 totalQ,
-                state.phase === 0 ? 1.0 : 0.0,
-                state.phase === 1 ? 1.0 : 0.0
+                isNS ? 1.0 : 0.0,
+                isNS ? 0.0 : 1.0
             ];
+        }
+
+        // 4-Arm Independent RL Scorer: combines window.RL_POLICY_WEIGHTS forward pass
+        // with per-arm queue demand and anti-starvation wait timers to select a single arm
+        function evaluate4ArmRLPolicy(state) {
+            const qs = state.queues || [0, 0, 0, 0];
+            const totalQ = qs[0] + qs[1] + qs[2] + qs[3];
+            const isNSActive = (state.activeArm === "N" || state.activeArm === "S");
+            const state7d = [
+                qs[0], qs[1], qs[2], qs[3],
+                totalQ,
+                isNSActive ? 1.0 : 0.0,
+                isNSActive ? 0.0 : 1.0
+            ];
+
+            // Genuine PyTorch MLP forward pass using window.RL_POLICY_WEIGHTS
+            const axisOut = evaluateRLPolicy(state7d);
+            const rawLogits = {};
+            const waits = state.armWaitTimes || { N: 0, S: 0, E: 0, W: 0 };
+
+            for (let idx = 0; idx < APPROACH_DIRS.length; idx++) {
+                const arm = APPROACH_DIRS[idx];
+                const qArm = qs[idx] || 0;
+                const waitSec = waits[arm] || 0;
+                const isArmNS = (arm === "N" || arm === "S");
+                const rlAxisProb = isArmNS ? axisOut.probs[0] : axisOut.probs[1];
+
+                // Per-arm RL prior + per-arm real queue demand + anti-starvation wait boost
+                const rlPrior = rlAxisProb * 2.5;
+                const demandTerm = qArm * 1.5;
+                const emptyPenalty = (qArm < 0.05) ? -3.5 : 0.0;
+                const starveBoost = (arm !== state.activeArm && qArm >= 0.15)
+                    ? (waitSec * 0.35 + (waitSec >= 20 ? (waitSec - 20) * 0.75 : 0))
+                    : 0.0;
+                const holdBias = (arm === state.activeArm && qArm >= 0.2 && !state.isAllRed) ? 0.5 : 0.0;
+
+                rawLogits[arm] = rlPrior + demandTerm + emptyPenalty + starveBoost + holdBias;
+            }
+
+            // 4-way softmax for independent arm confidence scores
+            const maxLogit = Math.max(rawLogits.N, rawLogits.S, rawLogits.E, rawLogits.W);
+            const exps = {};
+            let sumExp = 0;
+            for (const arm of APPROACH_DIRS) {
+                exps[arm] = Math.exp(Math.max(-20, Math.min(20, rawLogits[arm] - maxLogit)));
+                sumExp += exps[arm];
+            }
+            const armScores = {};
+            const probs4 = [];
+            for (const arm of APPROACH_DIRS) {
+                armScores[arm] = exps[arm] / (sumExp || 1);
+                probs4.push(armScores[arm]);
+            }
+
+            // Deterministic argmax with wait-time tie-breaker
+            let bestArm = APPROACH_DIRS[0];
+            let bestVal = -Infinity;
+            for (const arm of APPROACH_DIRS) {
+                const score = rawLogits[arm] + (waits[arm] || 0) * 0.001;
+                if (score > bestVal + 1e-6) {
+                    bestVal = score;
+                    bestArm = arm;
+                }
+            }
+
+            return {
+                bestArm: bestArm,
+                axisAction: (bestArm === "N" || bestArm === "S") ? 0 : 1,
+                probs: probs4,
+                axisProbs: axisOut.probs,
+                armScores: armScores,
+                armLogits: rawLogits,
+                state7d: state7d
+            };
         }
 
         /* =========================================================================
@@ -1703,15 +1809,24 @@
 
         function triggerSystemRefresh() {
             playAlertChime();
-            for (const [id, junc] of Object.entries(INTERSECTIONS)) {
-                if (junctionStates[id]) {
-                    const state7d = buildJunctionStateVector(id);
-                    const decision = evaluateRLPolicy(state7d);
-                    junctionStates[id].lastDecision = decision;
-                }
-            }
             if (vehicles.length === 0) {
                 initVehicles();
+            }
+            for (const [id, junc] of Object.entries(INTERSECTIONS)) {
+                const state = junctionStates[id];
+                if (state) {
+                    const t0 = performance.now();
+                    const policy4 = evaluate4ArmRLPolicy(state);
+                    const t1 = performance.now();
+                    state.lastModelArm = policy4.bestArm;
+                    state.lastModelAction = policy4.axisAction;
+                    state.lastModelProbs = policy4.probs;
+                    state.lastAxisProbs = policy4.axisProbs;
+                    state.armScores = policy4.armScores;
+                    state.armLogits = policy4.armLogits;
+                    state.lastInferenceTime = (t1 - t0);
+                    state.lastDecision = policy4;
+                }
             }
             particles = particles.filter(p => p.type === "smoke");
             updateRadarHUD();
@@ -2003,6 +2118,9 @@
                 }
 
                 vehicles.push(createCorridorVehicle(cId, dir, bestPos));
+            }
+            if (typeof syncAllQueuesToVehicles === "function") {
+                syncAllQueuesToVehicles();
             }
         }
 
@@ -2605,7 +2723,7 @@
                     if (stopLineDist > 0 && stopLineDist < 70) {
                         const yieldDecel = -Math.pow(v.speed, 2) / (2 * Math.max(4, stopLineDist));
                         desiredAccel = Math.min(desiredAccel, yieldDecel);
-                    } else if (stopLineDist <= 0 && distToJuncCenter >= 10) {
+                    } else if (stopLineDist <= 0 && distToJuncCenter >= 34) {
                         desiredAccel = -0.22;
                         v.speed = 0;
                         v.accel = 0;
@@ -2616,9 +2734,10 @@
                 // Physical stopped queue spacing: 28px bumper spacing (maintains >= 26px bumper distance with zero overlap)
                 const STOPPED_QUEUE_GAP = 28.0;
 
-                // Stop bar check: only stop during RED or AMBER
+                // Stop bar check: only halt vehicles still at or behind the stop line (dist >= 34px);
+                // vehicles already committed past 34px into the intersection clear smoothly without backward snapping.
                 let atStopBar = false;
-                if (isSignalRedOrAmber && stopLineDist <= 0 && distToJuncCenter >= -20) {
+                if (isSignalRedOrAmber && stopLineDist <= 0 && distToJuncCenter >= 34) {
                     atStopBar = true;
                 }
 
@@ -2661,12 +2780,12 @@
                         }
 
                         // Post-integration stop bar clamp:
-                        // If vehicle reached or crossed the stop bar during red/amber, immediately halt and clamp
+                        // Only clamp vehicles that have not yet committed past the stop bar (curDistToCenter >= 34px)
                         if (isSignalRedOrAmber && v.nextIntersection && !(leadVehicle && minLeadDist <= STOPPED_QUEUE_GAP)) {
                             const junc = INTERSECTIONS[v.nextIntersection];
                             const curDistToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
                             const curStopLineDist = curDistToCenter - 38;
-                            if (curStopLineDist <= 0 && curDistToCenter >= -20) {
+                            if (curStopLineDist <= 0 && curDistToCenter >= 34) {
                                 v.speed = 0;
                                 v.accel = 0;
                                 v.isBraking = true;
@@ -2991,155 +3110,239 @@
         }
 
         /* =========================================================================
-           24 TRAFFIC SIGNALS & REAL-TIME NEURAL NETWORK POLICY ACTUATION
-           Elapsed-time state machine: minGreen (8-12s), amber (3-3.5s), all-red (1.5-2.0s)
+           24 TRAFFIC SIGNALS & REAL-TIME 4-ARM INDEPENDENT RL POLICY ACTUATION
+           Strict mutual exclusion: at most ONE of N, S, E, W is green/amber per junction.
+           Transitions always pass through amber (3.2s) -> all-red clearance (1.8s).
            ========================================================================= */
+
+        function computeApproachDemands() {
+            const demands = {};
+            for (const id of Object.keys(INTERSECTIONS)) {
+                demands[id] = [0, 0, 0, 0]; // N, S, E, W
+            }
+            for (const v of vehicles) {
+                if (v.isEmergency || v.state !== "CRUISING" || !v.nextIntersection) continue;
+                const junc = INTERSECTIONS[v.nextIntersection];
+                const corr = CORRIDORS[v.corridorId];
+                if (!junc || !corr) continue;
+
+                const distToCenter = corr.isHorizontal
+                    ? (junc.x - v.x) * v.direction
+                    : (junc.y - v.y) * v.direction;
+                if (distToCenter <= 20 || distToCenter > 260) continue;
+
+                const arm = getVehicleApproachDir(v);
+                const armIdx = APPROACH_DIRS.indexOf(arm);
+                if (armIdx < 0) continue;
+
+                const weight = (v.speed < 0.25 || v.isBraking)
+                    ? 1.0
+                    : Math.max(0.2, 1.0 - (distToCenter - 38) / 260);
+                demands[v.nextIntersection][armIdx] += weight;
+            }
+            return demands;
+        }
+
+        function syncAllQueuesToVehicles() {
+            const demands = computeApproachDemands();
+            for (const [id, state] of Object.entries(junctionStates)) {
+                if (demands[id]) {
+                    state.queues = [...demands[id]];
+                }
+            }
+        }
+
+        function isIntersectionBoxOccupied(juncId) {
+            const junc = INTERSECTIONS[juncId];
+            if (!junc) return false;
+            for (const v of vehicles) {
+                if (Math.abs(v.x - junc.x) < 33 && Math.abs(v.y - junc.y) < 33) {
+                    if (v.state === "TURNING" || v.speed > 0.05) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        function getPreemptArmForJunction(juncId, state) {
+            const junc = INTERSECTIONS[juncId];
+            if (!junc) return state.activeArm || "N";
+
+            let bestDist = Infinity;
+            let chosenArm = null;
+            for (const v of vehicles) {
+                if (!v.isEmergency || !v.route || v.routeIndex >= v.route.length) continue;
+                const idxInRoute = v.route.indexOf(juncId, v.routeIndex);
+                if (idxInRoute < 0) continue;
+
+                const d = Math.hypot(junc.x - v.x, junc.y - v.y);
+                if (d < bestDist) {
+                    bestDist = d;
+                    let dx, dy;
+                    if (idxInRoute === v.routeIndex) {
+                        dx = junc.x - v.x;
+                        dy = junc.y - v.y;
+                    } else {
+                        const prevNode = INTERSECTIONS[v.route[idxInRoute - 1]];
+                        dx = prevNode ? (junc.x - prevNode.x) : 0;
+                        dy = prevNode ? (junc.y - prevNode.y) : 0;
+                    }
+                    if (Math.abs(dx) >= Math.abs(dy)) {
+                        chosenArm = dx >= 0 ? "W" : "E";
+                    } else {
+                        chosenArm = dy >= 0 ? "N" : "S";
+                    }
+                }
+            }
+            if (chosenArm) return chosenArm;
+            return APPROACH_DIRS.includes(state.activeArm) ? state.activeArm : ((juncId === "INT_1" || juncId === "INT_2" || juncId === "INT_3") ? "W" : "N");
+        }
 
         function updateTrafficSignals(dt) {
             const elapsed = (dt || (1 / 60));
+            const simDt = elapsed * Math.max(0.25, simSpeed);
+            const liveDemands = computeApproachDemands();
 
             for (const [id, state] of Object.entries(junctionStates)) {
-                // 1. Dynamic Green-Wave Preemption Override
-                if (emergencyPreemptionCorridor.includes(id)) {
-                    // Preemption corridor active: set green in direction of travel
-                    state.phase = (id === "INT_1" || id === "INT_2" || id === "INT_3") ? 1 : 0;
-                    state.targetPhase = state.phase;
-                    state.isAmber = false;
-                    state.isAllRed = false;
-                    state.phaseTime = 0;
-                } else if (state.manualOverride !== null) {
-                    // 2. Manual User Override
-                    if (state.manualOverride === 0 || state.manualOverride === 1) {
-                        state.phase = state.manualOverride;
-                        state.targetPhase = state.manualOverride;
-                        state.isAmber = false;
-                        state.isAllRed = false;
-                        state.phaseTime = 0;
+                if (!state.armWaitTimes) state.armWaitTimes = { N: 0, S: 0, E: 0, W: 0 };
+                if (!state.activeArm || !APPROACH_DIRS.includes(state.activeArm)) {
+                    state.activeArm = (state.phase === 1) ? "E" : "N";
+                }
+                if (!state.targetArm || !APPROACH_DIRS.includes(state.targetArm)) {
+                    state.targetArm = state.activeArm;
+                }
+
+                // A. Evaluate 4-Arm RL Policy on current queues before smoothing decay
+                //    so synthetic/burst demand spikes are reacted to immediately
+                const isPreempted = emergencyPreemptionCorridor.includes(id);
+                const forcedManual = (!isPreempted && typeof state.manualOverride === "string" && APPROACH_DIRS.includes(state.manualOverride))
+                    ? state.manualOverride
+                    : null;
+                const desiredForcedArm = isPreempted ? getPreemptArmForJunction(id, state) : forcedManual;
+
+                // Update per-arm starve-prevention wait timers
+                for (let q = 0; q < 4; q++) {
+                    const arm = APPROACH_DIRS[q];
+                    const qVal = state.queues[q] || 0;
+                    const isCurrentlyGreen = (!state.isAllRed && !state.isAmber && state.activeArm === arm);
+                    if (isCurrentlyGreen) {
+                        state.armWaitTimes[arm] = 0;
+                    } else if (qVal >= 0.2) {
+                        state.armWaitTimes[arm] = (state.armWaitTimes[arm] || 0) + simDt;
+                    } else {
+                        state.armWaitTimes[arm] = Math.max(0, (state.armWaitTimes[arm] || 0) - simDt * 0.5);
                     }
-                } else if (state.isAllRed) {
-                    // 3. All-Red Clearance Interval (all approaches red to prevent intersection collisions)
-                    state.allRedTimer -= elapsed;
+                }
+
+                // B. State Machine Transitions (Strict single-arm invariant + amber -> all-red clearance)
+                if (state.isAllRed) {
+                    if (desiredForcedArm) {
+                        state.targetArm = desiredForcedArm;
+                        state.targetPhase = (desiredForcedArm === "N" || desiredForcedArm === "S") ? 0 : 1;
+                    }
+                    state.allRedTimer -= simDt;
                     if (state.allRedTimer <= 0) {
-                        state.isAllRed = false;
-                        state.phase = state.targetPhase;
-                        state.phaseTime = 0.0;
-                        state.nextInferenceTimer = 0.6;
+                        const occupied = isIntersectionBoxOccupied(id);
+                        if (occupied && (state.allRedExtraWait || 0) < 3.5) {
+                            state.allRedExtraWait = (state.allRedExtraWait || 0) + simDt;
+                        } else {
+                            state.isAllRed = false;
+                            state.allRedExtraWait = 0;
+                            state.activeArm = state.targetArm;
+                            state.phase = (state.activeArm === "N" || state.activeArm === "S") ? 0 : 1;
+                            state.targetPhase = state.phase;
+                            state.phaseTime = 0.0;
+                            state.nextInferenceTimer = 0.5;
+                        }
                     }
                 } else if (state.isAmber) {
-                    // 4. Smooth Amber Caution Transition (3.0 to 3.5 seconds)
-                    state.amberTimer -= elapsed;
+                    if (desiredForcedArm) {
+                        state.targetArm = desiredForcedArm;
+                        state.targetPhase = (desiredForcedArm === "N" || desiredForcedArm === "S") ? 0 : 1;
+                    }
+                    state.amberTimer -= simDt;
                     if (state.amberTimer <= 0) {
                         state.isAmber = false;
                         state.isAllRed = true;
                         state.allRedTimer = state.allRedDuration;
+                        state.allRedExtraWait = 0;
                     }
                 } else {
-                    // 5. Active Green Phase Timing
-                    state.phaseTime += elapsed;
-                    state.nextInferenceTimer -= elapsed;
+                    // Active single-arm green phase
+                    state.phaseTime += simDt;
+                    state.nextInferenceTimer -= simDt;
 
-                    // 6. Periodic Deep Learning RL Policy Forward Pass (evaluated periodically)
-                    if (state.nextInferenceTimer <= 0) {
-                        state.nextInferenceTimer = 0.8;
+                    if (state.nextInferenceTimer <= 0 || desiredForcedArm) {
+                        if (state.nextInferenceTimer <= 0) {
+                            state.nextInferenceTimer = 0.6;
+                            const t0 = performance.now();
+                            const policy4 = evaluate4ArmRLPolicy(state);
+                            const t1 = performance.now();
 
-                        const qs = state.queues;
-                        const totalQ = qs[0] + qs[1] + qs[2] + qs[3];
-                        const state7d = [
-                            qs[0], qs[1], qs[2], qs[3],
-                            totalQ,
-                            state.phase === 0 ? 1.0 : 0.0,
-                            state.phase === 1 ? 1.0 : 0.0
-                        ];
-
-                        const t0 = performance.now();
-                        const policyOut = evaluateRLPolicy(state7d);
-                        const t1 = performance.now();
-
-                        state.lastModelAction = policyOut.action;
-                        state.lastModelProbs = policyOut.probs;
-                        state.lastInferenceTime = (t1 - t0);
-
-                        // Dynamic Demand & Queue Relief:
-                        // When North & South queues are heavy, immediately select Action 0 (NS Green)!
-                        // When East & West queues are heavy, select Action 1 (EW Green)!
-                        let chosenAction = policyOut.action;
-                        const nsQ = qs[0] + qs[1];
-                        const ewQ = qs[2] + qs[3];
-                        if (nsQ >= ewQ + 2.0) {
-                            chosenAction = 0;
-                        } else if (ewQ >= nsQ + 2.0) {
-                            chosenAction = 1;
+                            state.lastModelArm = policy4.bestArm;
+                            state.lastModelAction = policy4.axisAction;
+                            state.lastModelProbs = policy4.probs;
+                            state.lastAxisProbs = policy4.axisProbs;
+                            state.armScores = policy4.armScores;
+                            state.armLogits = policy4.armLogits;
+                            state.lastInferenceTime = (t1 - t0);
+                            state.lastDecision = policy4;
                         }
 
-                        // Actuate phase transition when minimum green holding time has elapsed
-                        // CRITICAL CONGESTION: bypass minHold entirely when one axis is saturated (>= 20 vehicles)
-                        // and the other is nearly empty (< 4 vehicles) — no point waiting, switch NOW!
-                        const isCriticalCongestion = (state.phase === 0 && ewQ >= 20 && nsQ < 4) ||
-                                                     (state.phase === 1 && nsQ >= 20 && ewQ < 4);
-                        const isSevereCongestion = (state.phase === 0 && ewQ > 16 && nsQ < 6) ||
-                                                   (state.phase === 1 && nsQ > 16 && ewQ < 6);
-                        const minHold = isCriticalCongestion ? 5.0
-                                      : isSevereCongestion   ? Math.max(6.0, state.minGreen * 0.65)
-                                      : state.minGreen;
+                        if (desiredForcedArm) {
+                            if (state.activeArm !== desiredForcedArm) {
+                                state.isAmber = true;
+                                state.amberTimer = state.amberDuration;
+                                state.targetArm = desiredForcedArm;
+                                state.targetPhase = (desiredForcedArm === "N" || desiredForcedArm === "S") ? 0 : 1;
+                            } else {
+                                state.phaseTime = 0;
+                            }
+                        } else if (state.lastModelArm) {
+                            const bestArm = state.lastModelArm;
+                            const activeIdx = APPROACH_DIRS.indexOf(state.activeArm);
+                            const bestIdx = APPROACH_DIRS.indexOf(bestArm);
+                            const qActive = state.queues[activeIdx] || 0;
+                            const qBest = state.queues[bestIdx] || 0;
+                            const wBest = state.armWaitTimes[bestArm] || 0;
 
-                        if (chosenAction !== state.phase && state.phaseTime >= minHold) {
-                            state.isAmber = true;
-                            state.amberTimer = state.amberDuration;
-                            state.targetPhase = chosenAction;
+                            const isCritical = (qActive < 0.2 && (qBest >= 1.0 || wBest >= 10.0)) ||
+                                               (qBest >= 12.0 && qActive < 3.0);
+                            const minHold = isCritical ? 5.0 : state.minGreen;
+
+                            if (bestArm !== state.activeArm && state.phaseTime >= minHold) {
+                                state.isAmber = true;
+                                state.amberTimer = state.amberDuration;
+                                state.targetArm = bestArm;
+                                state.targetPhase = (bestArm === "N" || bestArm === "S") ? 0 : 1;
+                            }
                         }
                     }
                 }
 
-                // Compute Independent 4-Way Approach Signal States (N, S, E, W)
-                if (!state.signals) {
-                    state.signals = { N: "red", S: "red", E: "red", W: "red" };
-                }
+                // C. Derive 4-Way Signals EXCLUSIVELY from (isAllRed, isAmber, activeArm)
+                enforceSingleSignalInvariant(state);
 
-                if (state.isAllRed) {
-                    state.signals.N = "red";
-                    state.signals.S = "red";
-                    state.signals.E = "red";
-                    state.signals.W = "red";
-                } else if (state.isAmber) {
-                    if (state.phase === 0) {
-                        state.signals.N = "amber";
-                        state.signals.S = "amber";
-                        state.signals.E = "red";
-                        state.signals.W = "red";
-                    } else {
-                        state.signals.N = "red";
-                        state.signals.S = "red";
-                        state.signals.E = "amber";
-                        state.signals.W = "amber";
-                    }
-                } else {
-                    if (state.phase === 0) {
-                        state.signals.N = "green";
-                        state.signals.S = "green";
-                        state.signals.E = "red";
-                        state.signals.W = "red";
-                    } else {
-                        state.signals.N = "red";
-                        state.signals.S = "red";
-                        state.signals.E = "green";
-                        state.signals.W = "green";
-                    }
-                }
-
-                // Single approach manual override if specified
-                if (typeof state.manualOverride === "string" && ["N", "S", "E", "W"].includes(state.manualOverride)) {
-                    for (const d of ["N", "S", "E", "W"]) {
-                        state.signals[d] = (d === state.manualOverride) ? "green" : "red";
-                    }
-                }
-
-                // Realistic queue inflow (0.05 - 0.10 veh/sec) and outflow (0.45 veh/sec on green)
+                // D. Couple Approach Queues Dynamically to Canvas Vehicles + Smooth Discharge
+                const armDemands = liveDemands[id] || [0, 0, 0, 0];
                 for (let q = 0; q < 4; q++) {
-                    const dirKey = ["N", "S", "E", "W"][q];
+                    const dirKey = APPROACH_DIRS[q];
                     const isGreenApproach = (state.signals[dirKey] === "green");
-                    const discharge = isGreenApproach ? 0.45 * elapsed : 0.0;
-                    const arrival = (0.07 + (Math.sin(Date.now() * 0.001 + q) * 0.02)) * elapsed;
-                    state.queues[q] = Math.max(0.5, Math.min(24.5, state.queues[q] + arrival - discharge));
+                    const liveQ = armDemands[q] || 0;
+                    const curQ = state.queues[q] || 0;
+
+                    if (curQ > 6.0 && liveQ < curQ) {
+                        // Smooth discharge from high/saturated queue without abrupt snap
+                        const rate = isGreenApproach ? 0.65 : 0.35;
+                        state.queues[q] = Math.max(liveQ, curQ - rate * simDt);
+                    } else {
+                        // Track actual waiting/approaching vehicles on canvas smoothly
+                        const alpha = Math.min(1.0, simDt * (isGreenApproach ? 4.0 : 3.5));
+                        let nextQ = curQ + (liveQ - curQ) * alpha;
+                        if (liveQ === 0 && nextQ < 0.03) nextQ = 0.0;
+                        state.queues[q] = Math.max(0.0, Math.min(25.0, nextQ));
+                    }
                 }
             }
         }
@@ -4810,47 +5013,96 @@
             document.getElementById("selJuncName").textContent = junc.name;
             document.getElementById("selJuncStreets").textContent = junc.streets;
 
-            // Approach Queues
-            const qs = state.queues;
+            // Sync Junction Mode Tag on every inspector refresh / junction switch
+            const isPreempted = emergencyPreemptionCorridor.includes(selectedJunctionId);
+            const modeTag = document.getElementById("junctionModeTag");
+            if (modeTag) {
+                if (isPreempted) {
+                    modeTag.textContent = "PREEMPTION";
+                    modeTag.style.color = "var(--accent-red)";
+                } else if (state.manualOverride) {
+                    modeTag.textContent = `MANUAL OVERRIDE (${state.manualOverride})`;
+                    modeTag.style.color = "var(--accent-amber)";
+                } else {
+                    modeTag.textContent = "AUTONOMOUS RL";
+                    modeTag.style.color = "var(--accent-cyan)";
+                }
+            }
+
+            // Highlight active override button
+            for (const d of APPROACH_DIRS) {
+                const btn = document.getElementById("btnOverride" + d);
+                if (btn) btn.classList.toggle("active-tool", state.manualOverride === d);
+            }
+
+            // Approach Queues (CAPACITY: 25.0)
+            const qs = state.queues || [0, 0, 0, 0];
             document.getElementById("valQNorth").textContent = qs[0].toFixed(1);
             document.getElementById("valQSouth").textContent = qs[1].toFixed(1);
             document.getElementById("valQEast").textContent = qs[2].toFixed(1);
             document.getElementById("valQWest").textContent = qs[3].toFixed(1);
 
-            document.getElementById("barQNorth").style.width = Math.min(100, (qs[0] / 24) * 100) + "%";
-            document.getElementById("barQSouth").style.width = Math.min(100, (qs[1] / 24) * 100) + "%";
-            document.getElementById("barQEast").style.width = Math.min(100, (qs[2] / 24) * 100) + "%";
-            document.getElementById("barQWest").style.width = Math.min(100, (qs[3] / 24) * 100) + "%";
+            document.getElementById("barQNorth").style.width = Math.min(100, (qs[0] / 25.0) * 100) + "%";
+            document.getElementById("barQSouth").style.width = Math.min(100, (qs[1] / 25.0) * 100) + "%";
+            document.getElementById("barQEast").style.width = Math.min(100, (qs[2] / 25.0) * 100) + "%";
+            document.getElementById("barQWest").style.width = Math.min(100, (qs[3] / 25.0) * 100) + "%";
 
-            // Signal lights status in inspector (independent 4-way N, S, E, W signals)
+            // Signal lights status in inspector (strict single-signal 4-way N, S, E, W)
             setInspectorLight("N", getApproachSignal(state, "N"));
             setInspectorLight("S", getApproachSignal(state, "S"));
             setInspectorLight("E", getApproachSignal(state, "E"));
             setInspectorLight("W", getApproachSignal(state, "W"));
 
             // Preemption badge in inspector
-            const isPreempted = emergencyPreemptionCorridor.includes(selectedJunctionId);
             const pBadge = document.getElementById("preemptionIndicator");
             if (pBadge) {
                 pBadge.textContent = isPreempted ? "🚨 GREEN-WAVE PREEMPTION" : "NORMAL CYCLE";
                 pBadge.style.color = isPreempted ? "var(--accent-red)" : "var(--accent-lime)";
             }
 
-            // Real-Time Neural Network Inference Display
-            const act = state.lastModelAction;
-            const probs = state.lastModelProbs;
-            const recText = (act === 0) ? "Action 0: North-South Green" : "Action 1: East-West Green";
-            const nsPct = Math.round(probs[0] * 100);
-            const ewPct = 100 - nsPct;
+            // Real-Time 4-Arm Neural Network Inference Display
+            const activeArm = state.activeArm || "N";
+            const targetArm = state.targetArm || activeArm;
+            const scores = state.armScores || { N: 0.25, S: 0.25, E: 0.25, W: 0.25 };
+            const waits = state.armWaitTimes || { N: 0, S: 0, E: 0, W: 0 };
 
-            document.getElementById("aiRecText").textContent = recText;
-            document.getElementById("aiConfText").textContent = `Confidence: NS ${nsPct}% | EW ${ewPct}%`;
-            document.getElementById("aiBarNS").style.width = nsPct + "%";
-            document.getElementById("aiBarEW").style.width = ewPct + "%";
-            document.getElementById("aiLatencyBadge").textContent = `< ${state.lastInferenceTime.toFixed(3)} ms`;
+            let recText;
+            if (state.isAllRed) {
+                recText = `All-Red Clearance → ${APPROACH_LABELS[targetArm]} (${state.allRedTimer.toFixed(1)}s)`;
+            } else if (state.isAmber) {
+                recText = `${APPROACH_LABELS[activeArm]} Amber → ${APPROACH_LABELS[targetArm]} (${state.amberTimer.toFixed(1)}s)`;
+            } else {
+                const aiRec = state.lastModelArm || activeArm;
+                recText = `Active: ${APPROACH_LABELS[activeArm]} Green | AI Best: ${APPROACH_LABELS[aiRec]}`;
+            }
+
+            const nPct = Math.round((scores.N || 0) * 100);
+            const sPct = Math.round((scores.S || 0) * 100);
+            const ePct = Math.round((scores.E || 0) * 100);
+            const wPct = Math.max(0, 100 - nPct - sPct - ePct);
+
+            const aiRecEl = document.getElementById("aiRecText");
+            const aiConfEl = document.getElementById("aiConfText");
+            const aiLatEl = document.getElementById("aiLatencyBadge");
+            const aiTensorEl = document.getElementById("aiTensorText");
+            if (aiRecEl) aiRecEl.textContent = recText;
+            if (aiConfEl) aiConfEl.textContent = `Arm Scores: N ${nPct}% | S ${sPct}% | E ${ePct}% | W ${wPct}%`;
+
+            const barN = document.getElementById("aiBarN");
+            const barS = document.getElementById("aiBarS");
+            const barE = document.getElementById("aiBarE");
+            const barW = document.getElementById("aiBarW");
+            if (barN) barN.style.width = nPct + "%";
+            if (barS) barS.style.width = sPct + "%";
+            if (barE) barE.style.width = ePct + "%";
+            if (barW) barW.style.width = wPct + "%";
+            if (aiLatEl) aiLatEl.textContent = `< ${(state.lastInferenceTime || 0.02).toFixed(3)} ms`;
 
             const totalQ = qs[0] + qs[1] + qs[2] + qs[3];
-            document.getElementById("aiTensorText").textContent = `State: [${qs[0].toFixed(1)}, ${qs[1].toFixed(1)}, ${qs[2].toFixed(1)}, ${qs[3].toFixed(1)}, ${totalQ.toFixed(1)}, ${state.phase === 0 ? '1.0' : '0.0'}, ${state.phase === 1 ? '1.0' : '0.0'}]`;
+            const isNS = (activeArm === "N" || activeArm === "S");
+            if (aiTensorEl) {
+                aiTensorEl.textContent = `State: [${qs[0].toFixed(1)}, ${qs[1].toFixed(1)}, ${qs[2].toFixed(1)}, ${qs[3].toFixed(1)}, ${totalQ.toFixed(1)}, ${isNS ? '1.0' : '0.0'}, ${isNS ? '0.0' : '1.0'}] | Wait: N:${Math.round(waits.N || 0)}s S:${Math.round(waits.S || 0)}s E:${Math.round(waits.E || 0)}s W:${Math.round(waits.W || 0)}s`;
+            }
 
             // VAE Anomaly Score
             const baseErr = 1.25 + (Math.sin(Date.now() * 0.001) * 0.15);
@@ -4860,9 +5112,22 @@
             document.getElementById("topVaeResidual").style.color = vaeScore > 5 ? "var(--accent-red)" : "var(--accent-lime)";
             document.getElementById("vaeVFill").style.width = Math.min(100, (vaeScore / 10) * 100) + "%";
 
-            // Global Telemetry
+            // Global Telemetry (derived from real vehicle-coupled queues & active wait timers)
             document.getElementById("topVehCount").textContent = vehicles.length;
-            const avgWait = (totalQ * 0.45 + (activeIncidents.length > 0 ? 3.5 : 0)).toFixed(1);
+            let totalWaitSec = 0;
+            let activeWaitArms = 0;
+            for (const st of Object.values(junctionStates)) {
+                const wMap = st.armWaitTimes || {};
+                for (let q = 0; q < 4; q++) {
+                    if ((st.queues[q] || 0) >= 0.2) {
+                        totalWaitSec += (wMap[APPROACH_DIRS[q]] || 0);
+                        activeWaitArms++;
+                    }
+                }
+            }
+            const avgWait = activeWaitArms > 0
+                ? (totalWaitSec / activeWaitArms + (activeIncidents.length > 0 ? 3.5 : 0)).toFixed(1)
+                : (activeIncidents.length > 0 ? "3.5" : "0.0");
             document.getElementById("topWaitTime").textContent = avgWait + "s";
         }
 
@@ -4876,40 +5141,33 @@
             txt.style.color = (col === "red") ? "var(--sig-red)" : (col === "amber" ? "var(--sig-amber)" : "var(--sig-green)");
         }
 
-        function overrideJunctionSignal(juncId, phase) {
-            const state = junctionStates[juncId];
-            if (state) {
-                state.manualOverride = phase;
-                if (phase === 0 || phase === 1) {
-                    state.phase = phase;
-                    state.targetPhase = phase;
-                } else if (phase === "N" || phase === "S") {
-                    state.phase = 0;
-                    state.targetPhase = 0;
-                } else if (phase === "E" || phase === "W") {
-                    state.phase = 1;
-                    state.targetPhase = 1;
-                }
-                state.phaseTime = 0;
-                state.isAmber = false;
-                state.isAllRed = false;
-
-                if (!state.signals) state.signals = { N: "red", S: "red", E: "red", W: "red" };
-                if (phase === 0) {
-                    state.signals.N = "green"; state.signals.S = "green"; state.signals.E = "red"; state.signals.W = "red";
-                } else if (phase === 1) {
-                    state.signals.N = "red"; state.signals.S = "red"; state.signals.E = "green"; state.signals.W = "green";
-                } else if (["N", "S", "E", "W"].includes(phase)) {
-                    for (const d of ["N", "S", "E", "W"]) {
-                        state.signals[d] = (d === phase) ? "green" : "red";
-                    }
-                }
-
-                document.getElementById("junctionModeTag").textContent = "MANUAL OVERRIDE";
-                document.getElementById("junctionModeTag").style.color = "var(--accent-amber)";
-                logDispatchEvent("Override", `Manual override set for ${juncId}: ${phase}`);
-                updateInspectorUI();
+        function overrideJunctionSignal(juncId, armOrMode) {
+            if (armOrMode === "AUTO" || armOrMode === null || armOrMode === undefined) {
+                clearJunctionOverride(juncId);
+                return;
             }
+            const state = junctionStates[juncId];
+            if (!state) return;
+
+            // Map legacy numeric phase 0/1 to a single arm (never 2 arms simultaneously)
+            let targetArm = armOrMode;
+            if (armOrMode === 0) targetArm = "N";
+            else if (armOrMode === 1) targetArm = "E";
+            if (!APPROACH_DIRS.includes(targetArm)) return;
+
+            state.manualOverride = targetArm;
+            state.targetArm = targetArm;
+            state.targetPhase = (targetArm === "N" || targetArm === "S") ? 0 : 1;
+
+            // Enforce strict amber -> all-red clearance if another arm is currently open
+            if (!state.isAllRed && !state.isAmber && state.activeArm !== targetArm) {
+                state.isAmber = true;
+                state.amberTimer = state.amberDuration;
+            }
+            enforceSingleSignalInvariant(state);
+
+            logDispatchEvent("Override", `Manual single-arm override set for ${juncId}: ${targetArm}`);
+            updateInspectorUI();
         }
 
         function clearJunctionOverride(juncId) {
@@ -4918,9 +5176,7 @@
                 state.manualOverride = null;
                 state.phaseTime = 0;
                 state.nextInferenceTimer = 0.2;
-                document.getElementById("junctionModeTag").textContent = "AUTONOMOUS RL";
-                document.getElementById("junctionModeTag").style.color = "var(--accent-cyan)";
-                logDispatchEvent("Restore", `Autonomous RL control restored for ${juncId}`);
+                logDispatchEvent("Restore", `Autonomous 4-arm RL control restored for ${juncId}`);
                 updateInspectorUI();
             }
         }
@@ -4981,19 +5237,11 @@
             disengageChaseCam();
             initVehicles();
             resolveAllIncidents();
-            for (const state of Object.values(junctionStates)) {
-                state.queues = [3.5, 3.8, 2.5, 2.8];
-                state.signals = { N: "green", S: "green", E: "red", W: "red" };
-                state.phase = 0;
-                state.targetPhase = 0;
-                state.phaseTime = 0;
-                state.isAmber = false;
-                state.amberTimer = 0;
-                state.isAllRed = false;
-                state.allRedTimer = 0;
-                state.nextInferenceTimer = 0.5;
-                state.manualOverride = null;
+            for (const [id, state] of Object.entries(junctionStates)) {
+                const jNum = parseInt(id.replace("INT_", "")) || 1;
+                Object.assign(state, createInitialJunctionState(id, jNum));
             }
+            syncAllQueuesToVehicles();
             updateInspectorUI();
             logDispatchEvent("Reset", "City network state reset to nominal baseline.");
         }
