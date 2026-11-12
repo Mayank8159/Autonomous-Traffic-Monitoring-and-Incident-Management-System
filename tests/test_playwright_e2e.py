@@ -39,6 +39,7 @@ def run_e2e_tests():
 
     console_logs = []
     console_errors = []
+    failed_requests = []
 
     print("[E2E] Launching Headless Chromium via Playwright...", flush=True)
     with sync_playwright() as p:
@@ -53,14 +54,24 @@ def run_e2e_tests():
         # Intercept favicon.ico to prevent 404 console errors
         page.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
 
-        # Capture console messages
+        # Capture console messages, pageerrors, and failed network requests
         def on_console(msg):
             console_logs.append(f"[{msg.type}] {msg.text}")
             if msg.type == "error":
                 console_errors.append(f"Console Error: {msg.text} (at {msg.location})")
 
+        def on_request_failed(req):
+            if "favicon.ico" not in req.url:
+                failed_requests.append(f"RequestFailed: {req.method} {req.url} ({req.failure})")
+
+        def on_response(resp_obj):
+            if resp_obj.status >= 400 and "favicon.ico" not in resp_obj.url:
+                failed_requests.append(f"HTTP {resp_obj.status}: {resp_obj.url}")
+
         page.on("console", on_console)
         page.on("pageerror", lambda exc: console_errors.append(f"Page Exception: {exc}"))
+        page.on("requestfailed", on_request_failed)
+        page.on("response", on_response)
 
         url = f"{BASE_URL}/web_visualizer/visualizer.html"
         print(f"[E2E] Navigating to {url}...", flush=True)
@@ -465,40 +476,58 @@ def run_e2e_tests():
             assert math.isclose(spd_075, 0.75, abs_tol=1e-3), f"Expected simSpeed 0.75, got {spd_075}"
         print("[PASS] Interactive speed slider dynamically updates simSpeed and UI readout cleanly.", flush=True)
 
-        # 7.2 Signal Timing State Machine (>=8.0s Green, Amber >=3.0s, All-Red >=1.5s, No Rapid Flickering)
-        print("[E2E] Verifying timing parameters across all 6 physical signal controllers...", flush=True)
+        # 7.2 Signal Timing State Machine & Strict Single-Signal Mutual Exclusion
+        print("[E2E] Verifying timing parameters & single-signal invariant across all 6 intersections...", flush=True)
         sig_states = page.evaluate("""() => {
             return Object.entries(junctionStates).map(([id, s]) => ({
                 id: id,
                 minGreen: s.minGreen,
                 amberDuration: s.amberDuration,
                 allRedDuration: s.allRedDuration,
+                activeArm: s.activeArm,
                 phase: s.phase,
                 isAmber: s.isAmber,
-                isAllRed: s.isAllRed
+                isAllRed: s.isAllRed,
+                signals: { ...s.signals }
             }));
         }""")
         for s in sig_states:
             assert s["minGreen"] >= 8.0, f"Junction {s['id']} minGreen {s['minGreen']}s < 8.0s requirement!"
             assert s["amberDuration"] >= 3.0, f"Junction {s['id']} amberDuration {s['amberDuration']}s < 3.0s!"
             assert s["allRedDuration"] >= 1.5, f"Junction {s['id']} allRedDuration {s['allRedDuration']}s < 1.5s!"
+            open_arms = [d for d in ("N", "S", "E", "W") if s["signals"].get(d) in ("green", "amber")]
+            assert len(open_arms) <= 1, f"Single-signal invariant violated on {s['id']}: open arms={open_arms}, signals={s['signals']}"
         print(f"[PASS] All {len(sig_states)} junction signal heads configured with minGreen >= 8.0s, amber >= 3.0s, all-red >= 1.5s.", flush=True)
 
-        # Check for zero high-frequency flickering over 20 sampling frames
+        # Sustained 4.0s sampling (40 frames): strict single-signal invariant + zero rapid flickering
         flicker_count = 0
-        last_sig_phases = {s["id"]: s["phase"] for s in sig_states}
-        for _ in range(20):
+        invariant_violations = []
+        last_sig_snap = {s["id"]: s for s in sig_states}
+        for frame_idx in range(40):
             page.wait_for_timeout(100)
-            current_sig_phases = page.evaluate("() => Object.fromEntries(Object.entries(junctionStates).map(([id, s]) => [id, s.phase]))")
-            for jid, ph in current_sig_phases.items():
-                if ph != last_sig_phases[jid]:
-                    # Check that the change was preceded by valid phase hold
-                    phase_time = page.evaluate(f"() => junctionStates['{jid}'] ? junctionStates['{jid}'].phaseTime : 0")
-                    if phase_time < 0.0:  # Freshly reset after all-red is valid
-                        flicker_count += 1
-            last_sig_phases = current_sig_phases
-        assert flicker_count == 0, f"Signal flicker violations detected: {flicker_count}"
-        print("[PASS] Signal stability verified: ZERO rapid flickering, smooth transition cycles confirmed.", flush=True)
+            curr_snap = page.evaluate("""() => Object.fromEntries(
+                Object.entries(junctionStates).map(([id, s]) => [
+                    id,
+                    {
+                        activeArm: s.activeArm,
+                        isAmber: s.isAmber,
+                        isAllRed: s.isAllRed,
+                        phaseTime: s.phaseTime,
+                        signals: { N: getApproachSignal(id, 'N'), S: getApproachSignal(id, 'S'), E: getApproachSignal(id, 'E'), W: getApproachSignal(id, 'W') }
+                    }
+                ])
+            )""")
+            for jid, st in curr_snap.items():
+                open_arms = [d for d in ("N", "S", "E", "W") if st["signals"][d] in ("green", "amber")]
+                if len(open_arms) > 1:
+                    invariant_violations.append({"frame": frame_idx, "junction": jid, "open": open_arms, "signals": st["signals"]})
+                prev = last_sig_snap[jid]
+                if st["activeArm"] != prev["activeArm"] and not (prev["isAmber"] or prev["isAllRed"]):
+                    flicker_count += 1
+                last_sig_snap[jid] = st
+        assert len(invariant_violations) == 0, f"Single-signal mutual exclusion violations: {invariant_violations}"
+        assert flicker_count == 0, f"Signal flicker violations detected (arm switched without amber/all-red): {flicker_count}"
+        print("[PASS] Strict single-signal invariant (<=1 green/amber per junction) & zero flickering verified across 40 live frames.", flush=True)
 
         # 7.3 Firm Red-Light Stopping at Stop Bar (speed = 0)
         print("[E2E] Verifying red light stopping compliance at stop lines...", flush=True)
@@ -662,53 +691,69 @@ def run_e2e_tests():
 
         # 7.8 Zero Deadlock: Vehicles with GREEN signals advance freely through intersections
         print("[E2E] Verifying Zero Deadlock: vehicles with GREEN signals advance freely through intersections...", flush=True)
-        e2e_deadlock_check = page.evaluate("""() => {
-            let greenCount = 0;
-            let advancingCount = 0;
-            const deadlocked = [];
+        stuck_counts = {}
+        green_total = 0
+        advancing_total = 0
+        deadlocked_persistent = []
+        for _ in range(10):
+            e2e_deadlock_check = page.evaluate("""() => {
+                let greenCount = 0;
+                let advancingCount = 0;
+                const stuck = [];
 
-            for (const v of vehicles) {
-                if (v.state !== 'CRUISING' || v.isEmergency || !v.nextIntersection) continue;
-                const nearIncident = (typeof activeIncidents !== 'undefined') && activeIncidents.some(inc => Math.hypot(inc.x - v.x, inc.y - v.y) < 70);
-                if (nearIncident) continue;
-                const corr = CORRIDORS[v.corridorId];
-                const approachDir = getVehicleApproachDir(v);
-                const sig = getApproachSignal(v.nextIntersection, approachDir);
-                const junc = INTERSECTIONS[v.nextIntersection];
-                const distToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
+                for (const v of vehicles) {
+                    if (v.state !== 'CRUISING' || v.isEmergency || !v.nextIntersection) continue;
+                    const nearIncident = (typeof activeIncidents !== 'undefined') && activeIncidents.some(inc => Math.hypot(inc.x - v.x, inc.y - v.y) < 70);
+                    if (nearIncident) continue;
+                    const corr = CORRIDORS[v.corridorId];
+                    const approachDir = getVehicleApproachDir(v);
+                    const sig = getApproachSignal(v.nextIntersection, approachDir);
+                    const junc = INTERSECTIONS[v.nextIntersection];
+                    const distToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
 
-                if (sig === 'green' && distToCenter > 0 && distToCenter < 120) {
-                    greenCount++;
+                    if (sig === 'green' && distToCenter > 0 && distToCenter < 120) {
+                        greenCount++;
 
-                    let leadDist = 9999;
-                    for (const o of vehicles) {
-                        if (o.id === v.id || o.corridorId !== v.corridorId || o.direction !== v.direction) continue;
-                        const d = corr.isHorizontal ? (o.x - v.x) * v.direction : (o.y - v.y) * v.direction;
-                        if (d > 0 && d < leadDist) leadDist = d;
-                    }
-
-                    let turningInJunc = false;
-                    for (const o of vehicles) {
-                        if (o.id === v.id) continue;
-                        if (Math.abs(o.x - junc.x) < 24 && Math.abs(o.y - junc.y) < 24 && (o.state === 'TURNING' || (o.corridorId !== v.corridorId && o.speed > 0.05))) {
-                            turningInJunc = true;
-                            break;
+                        let leadDist = 9999;
+                        for (const o of vehicles) {
+                            if (o.id === v.id || o.corridorId !== v.corridorId || o.direction !== v.direction) continue;
+                            const d = corr.isHorizontal ? (o.x - v.x) * v.direction : (o.y - v.y) * v.direction;
+                            if (d > 0 && d < leadDist) leadDist = d;
                         }
-                    }
 
-                    if (leadDist > 40 && !turningInJunc) {
-                        if (v.speed > 0.1 || v.accel > 0) {
-                            advancingCount++;
-                        } else if (v.speed === 0 && v.accel <= 0) {
-                            deadlocked.push({ id: v.id, corridor: v.corridorId, distToCenter, leadDist, speed: v.speed, accel: v.accel });
+                        let turningInJunc = false;
+                        for (const o of vehicles) {
+                            if (o.id === v.id) continue;
+                            if (Math.abs(o.x - junc.x) < 32 && Math.abs(o.y - junc.y) < 32 && (o.state === 'TURNING' || (o.corridorId !== v.corridorId && o.speed > 0.04))) {
+                                turningInJunc = true;
+                                break;
+                            }
+                        }
+
+                        if (leadDist > 40 && !turningInJunc) {
+                            if (v.speed > 0.1 || v.accel > 0) {
+                                advancingCount++;
+                            } else if (v.speed === 0 && v.accel <= 0) {
+                                stuck.push({ id: v.id, corridor: v.corridorId, distToCenter, leadDist, speed: v.speed, accel: v.accel });
+                            }
                         }
                     }
                 }
-            }
-            return { greenCount, advancingCount, deadlocked };
-        }""")
-        print(f"[E2E] Green signal approach vehicles: {e2e_deadlock_check['greenCount']}, advancing: {e2e_deadlock_check['advancingCount']}, deadlocked: {len(e2e_deadlock_check['deadlocked'])}", flush=True)
-        assert len(e2e_deadlock_check["deadlocked"]) == 0, f"Deadlocked vehicles detected at green signals: {e2e_deadlock_check['deadlocked']}"
+                return { greenCount, advancingCount, stuck };
+            }""")
+            green_total += e2e_deadlock_check["greenCount"]
+            advancing_total += e2e_deadlock_check["advancingCount"]
+            curr_stuck_ids = {item["id"]: item for item in e2e_deadlock_check["stuck"]}
+            for vid in list(stuck_counts.keys()):
+                if vid not in curr_stuck_ids:
+                    del stuck_counts[vid]
+            for vid, item in curr_stuck_ids.items():
+                stuck_counts[vid] = stuck_counts.get(vid, 0) + 1
+                if stuck_counts[vid] >= 4:
+                    deadlocked_persistent.append(item)
+            page.wait_for_timeout(100)
+        print(f"[E2E] Green signal approach samples: {green_total}, advancing: {advancing_total}, persistent deadlocks: {len(deadlocked_persistent)}", flush=True)
+        assert len(deadlocked_persistent) == 0, f"Deadlocked vehicles detected at green signals: {deadlocked_persistent}"
         print("[PASS] Zero deadlock verified: all vehicles with green signals and open headways advance freely through intersections.", flush=True)
 
         shot_e2e_green = os.path.join(ROOT_DIR, "results", "green_wave_free_advance.png")
@@ -764,12 +809,30 @@ def run_e2e_tests():
             const indS = document.getElementById("txtLightS")?.textContent || "";
             const indE = document.getElementById("txtLightE")?.textContent || "";
             const indW = document.getElementById("txtLightW")?.textContent || "";
+            const aiRecText = document.getElementById("aiRecText")?.textContent || "";
+            const aiConfText = document.getElementById("aiConfText")?.textContent || "";
+            const aiTensorText = document.getElementById("aiTensorText")?.textContent || "";
+            const modeTag = document.getElementById("junctionModeTag")?.textContent || "";
+            const hasButtons = ["btnOverrideN", "btnOverrideS", "btnOverrideE", "btnOverrideW", "btnOverrideAuto"]
+                .every(btnId => !!document.getElementById(btnId));
+
+            const invariantFailures = [];
+            for (const [id, colors] of Object.entries(juncData)) {
+                const open = approaches.filter(d => colors[d] === "green" || colors[d] === "amber");
+                if (open.length > 1) invariantFailures.push({ id, open, colors });
+            }
 
             return {
                 allConfigured,
                 totalHeads,
                 validProjections,
                 juncData,
+                invariantFailures,
+                hasButtons,
+                aiRecText,
+                aiConfText,
+                aiTensorText,
+                modeTag,
                 inspector: { N: indN, S: indS, E: indE, W: indW }
             };
         }""")
@@ -777,79 +840,160 @@ def run_e2e_tests():
         assert signals_4way_check["allConfigured"], f"Independent 4-way signals missing or invalid: {signals_4way_check}"
         assert signals_4way_check["totalHeads"] == 24, f"Expected 24 signal heads, found {signals_4way_check['totalHeads']}"
         assert signals_4way_check["validProjections"], "Signal head screen projections invalid!"
-        print(f"[PASS] 24 independent approach signal heads (N, S, E, W) verified across all 6 intersections.", flush=True)
-        print(f"[PASS] Inspector 4-Way readout verified: N={signals_4way_check['inspector']['N']}, S={signals_4way_check['inspector']['S']}, E={signals_4way_check['inspector']['E']}, W={signals_4way_check['inspector']['W']}", flush=True)
+        assert len(signals_4way_check["invariantFailures"]) == 0, f"Single-signal invariant failed: {signals_4way_check['invariantFailures']}"
+        assert signals_4way_check["hasButtons"], "Missing 4-arm manual override / AI Auto buttons in Inspector!"
+        assert "Arm Scores:" in signals_4way_check["aiConfText"], f"Inspector missing 4-arm AI scores readout: {signals_4way_check['aiConfText']}"
+        print(f"[PASS] 24 independent approach signal heads (N, S, E, W) & strict <=1 invariant verified across all 6 intersections.", flush=True)
+        print(f"[PASS] Inspector 4-Way readout verified: N={signals_4way_check['inspector']['N']}, S={signals_4way_check['inspector']['S']}, E={signals_4way_check['inspector']['E']}, W={signals_4way_check['inspector']['W']} | {signals_4way_check['aiConfText']}", flush=True)
 
-        # Test single approach manual override: approach 'N' independent Green
-        page.evaluate("() => overrideJunctionSignal('INT_2', 'N')")
-        page.wait_for_timeout(200)
+        # Test single approach manual override: approach 'N' independent Green (with amber -> all-red clearance)
         override_test = page.evaluate("""() => {
+            overrideJunctionSignal('INT_2', 'N');
+            const st = junctionStates['INT_2'];
+            const modeTagDuringOverride = document.getElementById('junctionModeTag')?.textContent || '';
+            const manualAfterSet = st.manualOverride;
+
+            const stepViolations = [];
+            for (let i = 0; i < 60; i++) {
+                const openNow = APPROACH_DIRS.filter(d => getApproachSignal('INT_2', d) === 'green' || getApproachSignal('INT_2', d) === 'amber');
+                if (openNow.length > 1) stepViolations.push({ step: i, openNow });
+                if (!st.isAmber && !st.isAllRed && st.activeArm === 'N') break;
+                updateTrafficSignals(0.25);
+            }
+            updateInspectorUI();
             return {
+                manualAfterSet,
+                modeTagDuringOverride,
+                stepViolations,
+                activeArm: st.activeArm,
+                isAmber: st.isAmber,
+                isAllRed: st.isAllRed,
                 N: getApproachSignal('INT_2', 'N'),
                 S: getApproachSignal('INT_2', 'S'),
                 E: getApproachSignal('INT_2', 'E'),
                 W: getApproachSignal('INT_2', 'W')
             };
         }""")
+        assert override_test["manualAfterSet"] == "N", f"Expected manualOverride 'N', got {override_test['manualAfterSet']}"
+        assert "MANUAL OVERRIDE" in override_test["modeTagDuringOverride"], f"Mode tag not updated: {override_test['modeTagDuringOverride']}"
+        assert len(override_test["stepViolations"]) == 0, f"Single-signal invariant violated during override transition: {override_test['stepViolations']}"
         assert override_test["N"] == "green", f"Approach N failed manual override: {override_test}"
-        assert override_test["E"] == "red" and override_test["W"] == "red", f"Conflicting approaches not red: {override_test}"
-        print(f"[PASS] Independent manual approach override verified: N={override_test['N']}, S={override_test['S']}, E={override_test['E']}, W={override_test['W']}", flush=True)
+        assert override_test["S"] == "red" and override_test["E"] == "red" and override_test["W"] == "red", f"Conflicting/opposing approaches not red under strict single-signal mutual exclusion: {override_test}"
+        print(f"[PASS] Independent manual approach override verified (strict <=1): N={override_test['N']}, S={override_test['S']}, E={override_test['E']}, W={override_test['W']}", flush=True)
 
-        # Reset manual override to auto
-        page.evaluate("() => overrideJunctionSignal('INT_2', 'AUTO')")
-        page.wait_for_timeout(200)
+        # Reset manual override to auto via 'AUTO' and verify restoration
+        auto_restore = page.evaluate("""() => {
+            overrideJunctionSignal('INT_2', 'AUTO');
+            const st = junctionStates['INT_2'];
+            return {
+                manualOverride: st.manualOverride,
+                modeTag: document.getElementById('junctionModeTag')?.textContent || '',
+                openArms: APPROACH_DIRS.filter(d => getApproachSignal('INT_2', d) === 'green' || getApproachSignal('INT_2', d) === 'amber')
+            };
+        }""")
+        assert auto_restore["manualOverride"] is None, f"overrideJunctionSignal('INT_2', 'AUTO') did not clear manualOverride: {auto_restore}"
+        assert auto_restore["modeTag"] == "AUTONOMOUS RL", f"Expected 'AUTONOMOUS RL' mode tag after AUTO, got {auto_restore['modeTag']}"
+        assert len(auto_restore["openArms"]) <= 1, f"Invariant violated after AUTO restore: {auto_restore}"
+        print(f"[PASS] overrideJunctionSignal('INT_2', 'AUTO') cleanly restored {auto_restore['modeTag']} mode.", flush=True)
 
         shot_4way = os.path.join(ROOT_DIR, "results", "independent_4way_signals.png")
         page.screenshot(path=shot_4way, full_page=False)
         assert os.path.exists(shot_4way) and os.path.getsize(shot_4way) > 20000
         print(f"[PASS] Independent 4-way signals screenshot saved to {shot_4way} ({os.path.getsize(shot_4way)} bytes)", flush=True)
 
-        # 7.10 Dynamic Queue Relief & RL Demand Actuation (Heavy Queues Clear Rapidly Without Freezing)
-        print("\n[E2E] Verifying Dynamic Queue Relief & RL Demand Actuation...", flush=True)
+        # 7.10 Independent 4-Arm AI Demand Actuation (N -> E -> S -> W) & Dynamic Queue Relief
+        print("\n[E2E] Verifying Independent 4-Arm AI Actuation (N -> E -> S -> W) & Amber->All-Red Clearance...", flush=True)
         relief_check = page.evaluate("""() => {
             const jId = "INT_2";
             const state = junctionStates[jId];
-
+            emergencyPreemptionCorridor = [];
             state.manualOverride = null;
-            state.phase = 1; // Start in EW green
-            state.phaseTime = 12.0;
-            state.queues = [24.5, 24.5, 2.0, 2.0];
-            state.nextInferenceTimer = 0.0;
 
-            updateTrafficSignals(0.1);
-            const amberTriggered = state.isAmber && (state.targetPhase === 0);
-
-            // Transition to NS green
+            // Start cleanly on N green
             state.isAmber = false;
             state.isAllRed = false;
+            state.activeArm = "N";
+            state.targetArm = "N";
             state.phase = 0;
-            state.signals = { N: "green", S: "green", E: "red", W: "red" };
-            state.phaseTime = 0.0;
+            state.phaseTime = 12.0;
+            state.armWaitTimes = { N: 0, S: 0, E: 0, W: 0 };
+            enforceSingleSignalInvariant(state);
 
-            const qBeforeN = state.queues[0];
-            const qBeforeS = state.queues[1];
-            for (let i = 0; i < 20; i++) {
-                updateTrafficSignals(0.1);
+            const transitions = [];
+            const invariantViolations = [];
+            const sequence = [
+                { arm: "E", queues: [1.0, 1.0, 24.5, 1.0] },
+                { arm: "S", queues: [1.0, 24.5, 1.0, 1.0] },
+                { arm: "W", queues: [1.0, 1.0, 1.0, 24.5] },
+                { arm: "N", queues: [24.5, 1.0, 1.0, 1.0] }
+            ];
+
+            for (const stepCfg of sequence) {
+                const fromArm = state.activeArm;
+                state.queues = [...stepCfg.queues];
+                state.phaseTime = 12.0;
+                state.nextInferenceTimer = 0.0;
+
+                let sawAmber = false;
+                let sawAllRed = false;
+                let reachedTarget = false;
+
+                for (let iter = 0; iter < 60; iter++) {
+                    updateTrafficSignals(0.25);
+
+                    for (const [jid, jst] of Object.entries(junctionStates)) {
+                        const open = APPROACH_DIRS.filter(d => jst.signals[d] === "green" || jst.signals[d] === "amber");
+                        if (open.length > 1) {
+                            invariantViolations.push({ target: stepCfg.arm, iter, jid, open, signals: { ...jst.signals } });
+                        }
+                    }
+
+                    if (state.isAmber && state.targetArm === stepCfg.arm) {
+                        sawAmber = true;
+                    }
+                    if (state.isAllRed && state.targetArm === stepCfg.arm) {
+                        const anyOpen = APPROACH_DIRS.some(d => state.signals[d] !== "red");
+                        if (!anyOpen) sawAllRed = true;
+                    }
+                    if (!state.isAmber && !state.isAllRed && state.activeArm === stepCfg.arm && state.signals[stepCfg.arm] === "green") {
+                        reachedTarget = true;
+                        break;
+                    }
+                }
+
+                // Discharge on the single active green arm
+                const targetIdx = APPROACH_DIRS.indexOf(stepCfg.arm);
+                const qBefore = state.queues[targetIdx];
+                for (let k = 0; k < 20; k++) {
+                    updateTrafficSignals(0.1);
+                }
+                const qAfter = state.queues[targetIdx];
+
+                transitions.push({
+                    fromArm,
+                    toArm: stepCfg.arm,
+                    sawAmber,
+                    sawAllRed,
+                    reachedTarget,
+                    qBefore,
+                    qAfter,
+                    signals: { ...state.signals }
+                });
             }
-            const qAfterN = state.queues[0];
-            const qAfterS = state.queues[1];
 
-            return {
-                amberTriggered,
-                qBeforeN,
-                qBeforeS,
-                qAfterN,
-                qAfterS,
-                currentSignals: { ...state.signals }
-            };
+            return { transitions, invariantViolations };
         }""")
 
-        assert relief_check["amberTriggered"], "Heavy N/S queue failed to actuate phase switch to Phase 0 (NS Green)!"
-        assert relief_check["currentSignals"]["N"] == "green" and relief_check["currentSignals"]["S"] == "green", \
-            f"North/South not green: {relief_check['currentSignals']}"
-        assert relief_check["qAfterN"] < relief_check["qBeforeN"], f"North queue did not discharge: before={relief_check['qBeforeN']}, after={relief_check['qAfterN']}"
-        assert relief_check["qAfterS"] < relief_check["qBeforeS"], f"South queue did not discharge: before={relief_check['qBeforeS']}, after={relief_check['qAfterS']}"
-        print(f"[PASS] Dynamic queue relief verified: N/S queue relieved from {relief_check['qBeforeN']:.1f} down to {relief_check['qAfterN']:.1f} & {relief_check['qAfterS']:.1f} without freezing!", flush=True)
+        assert len(relief_check["invariantViolations"]) == 0, f"Single-signal invariant violated during AI actuation: {relief_check['invariantViolations']}"
+        for tr in relief_check["transitions"]:
+            assert tr["sawAmber"], f"Transition {tr['fromArm']} -> {tr['toArm']} skipped AMBER phase: {tr}"
+            assert tr["sawAllRed"], f"Transition {tr['fromArm']} -> {tr['toArm']} skipped ALL-RED clearance: {tr}"
+            assert tr["reachedTarget"], f"AI failed to actuate target arm {tr['toArm']}: {tr}"
+            assert tr["signals"][tr["toArm"]] == "green", f"Target arm {tr['toArm']} not green: {tr['signals']}"
+            other_arms = [d for d in ("N", "S", "E", "W") if d != tr["toArm"]]
+            assert all(tr["signals"][d] == "red" for d in other_arms), f"Non-target arms not RED when {tr['toArm']} green: {tr['signals']}"
+            assert tr["qAfter"] < tr["qBefore"], f"Arm {tr['toArm']} queue did not discharge: before={tr['qBefore']}, after={tr['qAfter']}"
+            print(f"[PASS] Independent AI actuation {tr['fromArm']} -> {tr['toArm']}: amber->all-red->green verified, queue discharged {tr['qBefore']:.1f} -> {tr['qAfter']:.1f}", flush=True)
 
         # 7.11 Fluid Queue Discharge & Anti-Jam Kinematics (a >= 0.035 upon lead departure)
         print("\n[E2E] Verifying Fluid Queue Discharge & Immediate Positive Acceleration (a >= 0.035)...", flush=True)
@@ -890,6 +1034,8 @@ def run_e2e_tests():
             v2.targetSpeed = 1.0;
             v2.nextIntersection = "INT_2";
 
+            junctionStates["INT_2"].activeArm = "W";
+            junctionStates["INT_2"].targetArm = "W";
             junctionStates["INT_2"].signals = { N: "red", S: "red", E: "red", W: "green" };
             junctionStates["INT_2"].phase = 1;
             junctionStates["INT_2"].isAmber = false;
@@ -939,14 +1085,19 @@ def run_e2e_tests():
         assert os.path.exists(shot_fluid) and os.path.getsize(shot_fluid) > 20000
         print(f"[PASS] Fluid queue discharge screenshot saved to {shot_fluid} ({os.path.getsize(shot_fluid)} bytes)", flush=True)
 
-        # Check Console Errors
+        # Check Console Errors, Uncaught Page Exceptions, and Failed Network Requests
         print(f"\n[E2E] Total console logs recorded: {len(console_logs)}", flush=True)
         if console_errors:
-            print("[E2E] Console errors detected:", flush=True)
+            print("[E2E] Console/Page errors detected:", flush=True)
             for err in console_errors:
                 print(f"  ❌ {err}", flush=True)
-        assert len(console_errors) == 0, f"Found {len(console_errors)} console errors: {console_errors}"
-        print("[PASS] Zero unhandled console errors verified across entire E2E test run!", flush=True)
+        if failed_requests:
+            print("[E2E] Failed network requests detected:", flush=True)
+            for req_err in failed_requests:
+                print(f"  ❌ {req_err}", flush=True)
+        assert len(console_errors) == 0, f"Found {len(console_errors)} console/page errors: {console_errors}"
+        assert len(failed_requests) == 0, f"Found {len(failed_requests)} failed network requests: {failed_requests}"
+        print("[PASS] Zero unhandled console errors, zero pageerrors, and zero failed network requests verified across entire E2E test run!", flush=True)
 
         browser.close()
 

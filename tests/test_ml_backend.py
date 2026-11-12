@@ -172,3 +172,53 @@ def test_sequence_gan_scenario_generation():
         assert seq.shape == (10, 4)
         assert np.all(seq >= 0.0)
         assert np.all(seq <= 30.0)
+
+
+def test_city_network_single_signal_invariant_and_4arm_actuation():
+    """Verify strict <=1 GREEN/AMBER mutual exclusion and AMBER->ALL-RED->GREEN clearance across 100 steps."""
+    env = CityNetworkEnv(max_steps=120)
+    state = env.reset()
+
+    prev_arm = {nid: d["active_arm"] for nid, d in state.items()}
+    prev_was_all_red = {nid: d["is_all_red"] for nid, d in state.items()}
+    arms_served = {nid: set() for nid in state}
+
+    for step_idx in range(100):
+        state, _, _, _ = env.step()
+        for nid, d in state.items():
+            lights = d["lights"]
+            assert set(lights.keys()) == {"North", "South", "East", "West"}
+            open_arms = [arm for arm, col in lights.items() if col in ("GREEN", "AMBER")]
+            assert len(open_arms) <= 1, f"Step {step_idx} {nid} violated <=1 signal invariant: {lights}"
+
+            if d["is_all_red"]:
+                assert len(open_arms) == 0, f"Step {step_idx} {nid} had open lights during all-red: {lights}"
+                assert d["active_arm"] is None
+            else:
+                assert d["active_arm"] in ("N", "S", "E", "W")
+                arms_served[nid].add(d["active_arm"])
+
+            assert len(d["arm_scores"]) == 4
+            assert len(d["wait_timers"]) == 4
+
+            if d["active_arm"] is not None and prev_arm[nid] is not None and d["active_arm"] != prev_arm[nid]:
+                assert prev_was_all_red[nid], (
+                    f"Step {step_idx} {nid} switched {prev_arm[nid]} -> {d['active_arm']} without ALL-RED clearance!"
+                )
+            if d["active_arm"] is not None:
+                prev_arm[nid] = d["active_arm"]
+            prev_was_all_red[nid] = d["is_all_red"]
+
+    for nid, served in arms_served.items():
+        assert len(served) >= 2, f"Intersection {nid} starved arms, only served {served}"
+
+    # Verify explicit 4-arm action & incident preemption also uphold strict <=1 invariant
+    inc = env.trigger_incident("INT_2", "collision")
+    for _ in range(8):
+        state, _, _, _ = env.step(actions={"INT_1": "E"})
+        for nid, d in state.items():
+            open_arms = [arm for arm, col in d["lights"].items() if col in ("GREEN", "AMBER")]
+            assert len(open_arms) <= 1, f"Preemption/action violated <=1 invariant on {nid}: {d['lights']}"
+    env.resolve_incident(inc["id"])
+    state = env.get_state()
+    assert not state["INT_2"]["preemption"]

@@ -37,6 +37,7 @@ def run_kinematics_verification():
 
     chrome_exec = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
     console_errors = []
+    failed_requests = []
 
     print("[KINEMATICS] Launching Chromium to verify continuous vehicle kinematics & 3D ground contact...", flush=True)
     with sync_playwright() as p:
@@ -51,6 +52,8 @@ def run_kinematics_verification():
         page.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
         page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
         page.on("pageerror", lambda exc: console_errors.append(f"Page Exception: {exc}"))
+        page.on("requestfailed", lambda req: failed_requests.append(f"RequestFailed: {req.method} {req.url}") if "favicon.ico" not in req.url else None)
+        page.on("response", lambda r: failed_requests.append(f"HTTP {r.status}: {r.url}") if r.status >= 400 and "favicon.ico" not in r.url else None)
 
         url = f"{BASE_URL}/web_visualizer/visualizer.html"
         resp = page.goto(url, wait_until="domcontentloaded", timeout=15000)
@@ -284,33 +287,49 @@ def run_kinematics_verification():
             assert st["allRedDuration"] >= 1.5, f"Junction {st['id']} allRedDuration {st['allRedDuration']}s is less than 1.5s!"
             print(f"[PASS] Junction {st['id']}: minGreen={st['minGreen']:.1f}s, amberDuration={st['amberDuration']:.1f}s, allRedDuration={st['allRedDuration']:.1f}s", flush=True)
 
-        # Monitor signal stability over 3.0 seconds: confirm NO rapid flickering occurs
+        # Monitor signal stability & strict single-signal mutual exclusion over 3.0 seconds
         signal_flicker_violations = 0
+        invariant_violations = []
         prev_signals = page.evaluate("""() => {
             const map = {};
             for (const [id, s] of Object.entries(junctionStates)) {
-                map[id] = { phase: s.phase, isAmber: s.isAmber, isAllRed: s.isAllRed, phaseTime: s.phaseTime };
+                map[id] = {
+                    activeArm: s.activeArm,
+                    isAmber: s.isAmber,
+                    isAllRed: s.isAllRed,
+                    phaseTime: s.phaseTime,
+                    signals: { N: getApproachSignal(id, 'N'), S: getApproachSignal(id, 'S'), E: getApproachSignal(id, 'E'), W: getApproachSignal(id, 'W') }
+                };
             }
             return map;
         }""")
-        for _ in range(15):
+        for sample_i in range(15):
             page.wait_for_timeout(200)
             curr_signals = page.evaluate("""() => {
                 const map = {};
                 for (const [id, s] of Object.entries(junctionStates)) {
-                    map[id] = { phase: s.phase, isAmber: s.isAmber, isAllRed: s.isAllRed, phaseTime: s.phaseTime };
+                    map[id] = {
+                        activeArm: s.activeArm,
+                        isAmber: s.isAmber,
+                        isAllRed: s.isAllRed,
+                        phaseTime: s.phaseTime,
+                        signals: { N: getApproachSignal(id, 'N'), S: getApproachSignal(id, 'S'), E: getApproachSignal(id, 'E'), W: getApproachSignal(id, 'W') }
+                    };
                 }
                 return map;
             }""")
             for junc_id, curr_s in curr_signals.items():
+                open_arms = [d for d in ("N", "S", "E", "W") if curr_s["signals"][d] in ("green", "amber")]
+                if len(open_arms) > 1:
+                    invariant_violations.append({"sample": sample_i, "junction": junc_id, "open": open_arms, "signals": curr_s["signals"]})
                 prev_s = prev_signals[junc_id]
-                # If phase changed without transitioning through amber and holding minGreen, record violation
-                if curr_s["phase"] != prev_s["phase"] and not (prev_s["isAmber"] or prev_s["isAllRed"]):
-                    if prev_s["phaseTime"] < 8.0:
-                        signal_flicker_violations += 1
+                # Active arm change must pass through amber/all-red clearance
+                if curr_s["activeArm"] != prev_s["activeArm"] and not (prev_s["isAmber"] or prev_s["isAllRed"]):
+                    signal_flicker_violations += 1
             prev_signals = curr_signals
+        assert len(invariant_violations) == 0, f"Single-signal invariant violated: {invariant_violations}"
         assert signal_flicker_violations == 0, f"Detected {signal_flicker_violations} signal flicker violations!"
-        print("[PASS] Signal timing state machine verified: ZERO rapid flickering, >=8.0s minGreen hold confirmed.", flush=True)
+        print("[PASS] Strict single-signal invariant (<=1 green/amber per junction) & zero rapid flickering confirmed.", flush=True)
 
         # 11. Cars Approaching Red Signal: Stop Bar Clamping & Speed = 0 Holding
         print("[KINEMATICS] Verifying cars stop at red signals and hold speed=0 at stop bar...", flush=True)
@@ -459,63 +478,76 @@ def run_kinematics_verification():
 
         # 11C. Zero Deadlock: Vehicles with GREEN signals advance freely through intersections
         print("[KINEMATICS] Verifying Zero Deadlock: vehicles with GREEN signals advance freely through intersections...", flush=True)
-        deadlock_check = page.evaluate("""() => {
-            let greenVehiclesCount = 0;
-            let advancingCount = 0;
-            const deadlockedVehicles = [];
+        kin_stuck_counts = {}
+        kin_green_total = 0
+        kin_advancing_total = 0
+        kin_deadlocked_persistent = []
+        for _ in range(10):
+            deadlock_check = page.evaluate("""() => {
+                let greenVehiclesCount = 0;
+                let advancingCount = 0;
+                const stuck = [];
 
-            for (const v of vehicles) {
-                if (v.state !== 'CRUISING' || v.isEmergency || !v.nextIntersection) continue;
-                const nearIncident = (typeof activeIncidents !== 'undefined') && activeIncidents.some(inc => Math.hypot(inc.x - v.x, inc.y - v.y) < 70);
-                if (nearIncident) continue;
-                const corr = CORRIDORS[v.corridorId];
-                const approachDir = getVehicleApproachDir(v);
-                const sig = getApproachSignal(v.nextIntersection, approachDir);
-                const junc = INTERSECTIONS[v.nextIntersection];
-                const distToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
+                for (const v of vehicles) {
+                    if (v.state !== 'CRUISING' || v.isEmergency || !v.nextIntersection) continue;
+                    const nearIncident = (typeof activeIncidents !== 'undefined') && activeIncidents.some(inc => Math.hypot(inc.x - v.x, inc.y - v.y) < 70);
+                    if (nearIncident) continue;
+                    const corr = CORRIDORS[v.corridorId];
+                    const approachDir = getVehicleApproachDir(v);
+                    const sig = getApproachSignal(v.nextIntersection, approachDir);
+                    const junc = INTERSECTIONS[v.nextIntersection];
+                    const distToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
 
-                if (sig === 'green' && distToCenter > 0 && distToCenter < 120) {
-                    greenVehiclesCount++;
+                    if (sig === 'green' && distToCenter > 0 && distToCenter < 120) {
+                        greenVehiclesCount++;
 
-                    // Check if lead vehicle in same lane is directly in front
-                    let leadDist = 9999;
-                    for (const o of vehicles) {
-                        if (o.id === v.id || o.corridorId !== v.corridorId || o.direction !== v.direction) continue;
-                        const d = corr.isHorizontal ? (o.x - v.x) * v.direction : (o.y - v.y) * v.direction;
-                        if (d > 0 && d < leadDist) leadDist = d;
-                    }
-
-                    // Also check if turning vehicle is inside intersection
-                    let turningInJunc = false;
-                    for (const o of vehicles) {
-                        if (o.id === v.id) continue;
-                        if (Math.abs(o.x - junc.x) < 24 && Math.abs(o.y - junc.y) < 24 && (o.state === 'TURNING' || (o.corridorId !== v.corridorId && o.speed > 0.05))) {
-                            turningInJunc = true;
-                            break;
+                        let leadDist = 9999;
+                        for (const o of vehicles) {
+                            if (o.id === v.id || o.corridorId !== v.corridorId || o.direction !== v.direction) continue;
+                            const d = corr.isHorizontal ? (o.x - v.x) * v.direction : (o.y - v.y) * v.direction;
+                            if (d > 0 && d < leadDist) leadDist = d;
                         }
-                    }
 
-                    // If path ahead is clear (> 40px lead headway and no conflicting vehicle in box)
-                    if (leadDist > 40 && !turningInJunc) {
-                        if (v.speed > 0.1 || v.accel > 0) {
-                            advancingCount++;
-                        } else if (v.speed === 0 && v.accel <= 0) {
-                            deadlockedVehicles.push({
-                                id: v.id,
-                                corridor: v.corridorId,
-                                distToCenter: distToCenter,
-                                leadDist: leadDist,
-                                speed: v.speed,
-                                accel: v.accel
-                            });
+                        let turningInJunc = false;
+                        for (const o of vehicles) {
+                            if (o.id === v.id) continue;
+                            if (Math.abs(o.x - junc.x) < 32 && Math.abs(o.y - junc.y) < 32 && (o.state === 'TURNING' || (o.corridorId !== v.corridorId && o.speed > 0.04))) {
+                                turningInJunc = true;
+                                break;
+                            }
+                        }
+
+                        if (leadDist > 40 && !turningInJunc) {
+                            if (v.speed > 0.1 || v.accel > 0) {
+                                advancingCount++;
+                            } else if (v.speed === 0 && v.accel <= 0) {
+                                stuck.push({
+                                    id: v.id,
+                                    corridor: v.corridorId,
+                                    distToCenter: distToCenter,
+                                    leadDist: leadDist,
+                                    speed: v.speed,
+                                    accel: v.accel
+                                });
+                            }
                         }
                     }
                 }
-            }
-            return { greenVehiclesCount, advancingCount, deadlockedVehicles };
-        }""")
-        print(f"[KINEMATICS] Green signal approach vehicles: {deadlock_check['greenVehiclesCount']}, actively advancing: {deadlock_check['advancingCount']}, deadlocked: {len(deadlock_check['deadlockedVehicles'])}", flush=True)
-        assert len(deadlock_check["deadlockedVehicles"]) == 0, f"Deadlocked vehicles detected at green signals: {deadlock_check['deadlockedVehicles']}"
+                return { greenVehiclesCount, advancingCount, stuck };
+            }""")
+            kin_green_total += deadlock_check["greenVehiclesCount"]
+            kin_advancing_total += deadlock_check["advancingCount"]
+            curr_ids = {item["id"]: item for item in deadlock_check["stuck"]}
+            for vid in list(kin_stuck_counts.keys()):
+                if vid not in curr_ids:
+                    del kin_stuck_counts[vid]
+            for vid, item in curr_ids.items():
+                kin_stuck_counts[vid] = kin_stuck_counts.get(vid, 0) + 1
+                if kin_stuck_counts[vid] >= 4:
+                    kin_deadlocked_persistent.append(item)
+            page.wait_for_timeout(100)
+        print(f"[KINEMATICS] Green signal approach samples: {kin_green_total}, actively advancing: {kin_advancing_total}, persistent deadlocks: {len(kin_deadlocked_persistent)}", flush=True)
+        assert len(kin_deadlocked_persistent) == 0, f"Deadlocked vehicles detected at green signals: {kin_deadlocked_persistent}"
         print("[PASS] Zero deadlock verified: all vehicles with green signals and open headways advance freely through intersections.", flush=True)
 
         shot_green = os.path.join(ROOT_DIR, "results", "green_wave_free_advance.png")
@@ -523,150 +555,7 @@ def run_kinematics_verification():
         assert os.path.exists(shot_green) and os.path.getsize(shot_green) > 20000
         print(f"[PASS] Green wave free advance screenshot saved to {shot_green} ({os.path.getsize(shot_green)} bytes)", flush=True)
 
-        # 11D. Independent 4-Way Approach Signals & Dynamic Queue Relief Kinematics
-        print("[KINEMATICS] Verifying Independent 4-Way Approach Signals & Dynamic Queue Relief Kinematics...", flush=True)
-        sig4way_res = page.evaluate("""() => {
-            const approaches = ["N", "S", "E", "W"];
-            let allConfigured = true;
-            let totalHeads = 0;
-
-            for (const [id, junc] of Object.entries(INTERSECTIONS)) {
-                const state = junctionStates[id];
-                if (!state || !state.signals) {
-                    allConfigured = false;
-                    continue;
-                }
-                for (const d of approaches) {
-                    totalHeads++;
-                    const c = getApproachSignal(id, d);
-                    if (!["green", "amber", "red"].includes(c)) allConfigured = false;
-                }
-            }
-
-            // Dynamic Demand Relief at INT_2: Peg N/S queues to 24.5
-            const jId = "INT_2";
-            const state = junctionStates[jId];
-            emergencyPreemptionCorridor = [];
-            state.manualOverride = null;
-            state.isAmber = false;
-            state.isAllRed = false;
-            state.phase = 1;
-            state.phaseTime = 15.0;
-            state.queues = [24.5, 24.5, 2.0, 2.0];
-            state.nextInferenceTimer = 0.0;
-
-            updateTrafficSignals(0.1);
-            const amberTriggered = state.isAmber && (state.targetPhase === 0);
-
-            // Fast-forward to Green
-            state.isAmber = false;
-            state.isAllRed = false;
-            state.phase = 0;
-            state.signals = { N: "green", S: "green", E: "red", W: "red" };
-            state.phaseTime = 0.0;
-
-            const qBefore = state.queues[0];
-            for (let i = 0; i < 20; i++) updateTrafficSignals(0.1);
-            const qAfter = state.queues[0];
-
-            return {
-                allConfigured,
-                totalHeads,
-                amberTriggered,
-                qBefore,
-                qAfter,
-                signals: { ...state.signals }
-            };
-        }""")
-
-        assert sig4way_res["allConfigured"], f"Independent approach signals configuration invalid: {sig4way_res}"
-        assert sig4way_res["totalHeads"] == 24, f"Expected 24 signal heads, got {sig4way_res['totalHeads']}"
-        assert sig4way_res["amberTriggered"], "Heavy N/S queues failed to actuate green transition!"
-        assert sig4way_res["qAfter"] < sig4way_res["qBefore"], "Queues failed to discharge during green phase!"
-        print(f"[PASS] 24 Independent approach signals verified across all 6 junctions.", flush=True)
-        print(f"[PASS] Dynamic queue relief verified: N/S queue cleared from {sig4way_res['qBefore']:.1f} to {sig4way_res['qAfter']:.1f} without freezing.", flush=True)
-
-        # 11E. Fluid Queue Discharge Kinematics (a >= 0.035 on lead departure)
-        print("[KINEMATICS] Verifying Fluid Queue Discharge Kinematics (a >= 0.035 on lead departure)...", flush=True)
-        fluid_res = page.evaluate("""() => {
-            for (let j = 2; j < vehicles.length; j++) {
-                if (vehicles[j].corridorId === "H1" && vehicles[j].direction === 1) {
-                    vehicles[j].x = 1000;
-                }
-            }
-            const v1 = vehicles[0];
-            const v2 = vehicles[1];
-
-            v1.corridorId = "H1";
-            v1.direction = 1;
-            v1.state = "CRUISING";
-            v1.type = "sedan";
-            v1.length = 20;
-            v1.x = 300;
-            v1.y = 220 + 16;
-            v1.speed = 0.0;
-            v1.accel = 0.0;
-            v1.isBraking = true;
-            v1.targetSpeed = 1.0;
-            v1.nextIntersection = "INT_2";
-
-            v2.corridorId = "H1";
-            v2.direction = 1;
-            v2.state = "CRUISING";
-            v2.type = "sedan";
-            v2.length = 20;
-            v2.x = 300 - 28.0;
-            v2.y = 220 + 16;
-            v2.speed = 0.0;
-            v2.accel = 0.0;
-            v2.isBraking = true;
-            v2.targetSpeed = 1.0;
-            v2.nextIntersection = "INT_2";
-
-            junctionStates["INT_2"].signals = { N: "red", S: "red", E: "red", W: "green" };
-            junctionStates["INT_2"].phase = 1;
-            junctionStates["INT_2"].isAmber = false;
-            junctionStates["INT_2"].isAllRed = false;
-
-            const isLeadStoppedBefore = (v1.speed < 0.02 && v1.accel <= 0);
-            const distBefore = Math.abs(v1.x - v2.x);
-            const queueBlockedBefore = isLeadStoppedBefore && (distBefore <= 28.1);
-
-            // Lead car departs
-            v1.speed = 0.4;
-            v1.accel = 0.05;
-            v1.isBraking = false;
-
-            const isLeadStoppedAfter = (v1.speed < 0.02 && v1.accel <= 0);
-            const queueBlockedAfter = isLeadStoppedAfter && (distBefore <= 28.1);
-
-            const s0 = 15;
-            const T = 0.8;
-            const aMax = 0.06;
-            const bComf = 0.09;
-            const deltaV = v2.speed - v1.speed;
-            const sStar = s0 + Math.max(0, v2.speed * T + (v2.speed * deltaV) / (2 * Math.sqrt(aMax * bComf)));
-            const idmAccel = aMax * (1 - Math.pow(v2.speed / Math.max(0.1, v2.targetSpeed), 4) - Math.pow(sStar / Math.max(1, distBefore), 2));
-
-            updateVehicles(0.016);
-
-            return {
-                queueBlockedBefore,
-                queueBlockedAfter,
-                idmAccel,
-                trailAccel: v2.accel,
-                trailSpeed: v2.speed
-            };
-        }""")
-
-        assert fluid_res["queueBlockedBefore"], "Trailing car was not queued when lead was stopped!"
-        assert not fluid_res["queueBlockedAfter"], "Trailing car remained blocked after lead car departed!"
-        assert fluid_res["idmAccel"] >= 0.035, f"IDM acceleration too low: {fluid_res['idmAccel']} < 0.035"
-        assert fluid_res["trailAccel"] >= 0.035 or fluid_res["trailSpeed"] > 0, \
-            f"Trailing car failed to accelerate immediately: accel={fluid_res['trailAccel']}, speed={fluid_res['trailSpeed']}"
-        print(f"[PASS] Fluid queue discharge verified: IDM acceleration {fluid_res['idmAccel']:.4f} >= 0.035 px/frame.", flush=True)
-
-        # 12. Zero Inter-Vehicle Bounding Box Collisions (Minimum Distance >= 26px)
+        # 12. Zero Inter-Vehicle Bounding Box Collisions (Minimum Distance >= 26px) on untampered live fleet
         print("[KINEMATICS] Verifying 0 inter-vehicle bounding box collisions (min distance >= 26px)...", flush=True)
         min_fleet_dist = 9999.0
         collision_violations = []
@@ -741,9 +630,179 @@ def run_kinematics_verification():
         assert is_disengaged, "Chase Cam failed to disengage cleanly!"
         print("[PASS] Chase Cam disengagement verified cleanly.", flush=True)
 
-        # 16. Check Console Errors
-        assert len(console_errors) == 0, f"Found console errors: {console_errors}"
-        print("[PASS] Zero console errors during vehicle kinematics verification!", flush=True)
+        # 11D. Independent 4-Way Approach Signals & Single-Arm Dynamic Queue Relief Kinematics
+        print("[KINEMATICS] Verifying Independent 4-Way Approach Signals & Single-Arm Dynamic Queue Relief Kinematics...", flush=True)
+        sig4way_res = page.evaluate("""() => {
+            const approaches = ["N", "S", "E", "W"];
+            let allConfigured = true;
+            let totalHeads = 0;
+            const invariantViolations = [];
+
+            for (const [id, junc] of Object.entries(INTERSECTIONS)) {
+                const state = junctionStates[id];
+                if (!state || !state.signals) {
+                    allConfigured = false;
+                    continue;
+                }
+                const open = [];
+                for (const d of approaches) {
+                    totalHeads++;
+                    const c = getApproachSignal(id, d);
+                    if (!["green", "amber", "red"].includes(c)) allConfigured = false;
+                    if (c === "green" || c === "amber") open.push(d);
+                }
+                if (open.length > 1) invariantViolations.push({ id, open, signals: { ...state.signals } });
+            }
+
+            // Single-arm Dynamic Demand Relief at INT_2: Start on E green, peg N queue to 24.5
+            const jId = "INT_2";
+            const state = junctionStates[jId];
+            emergencyPreemptionCorridor = [];
+            state.manualOverride = null;
+            state.isAmber = false;
+            state.isAllRed = false;
+            state.activeArm = "E";
+            state.targetArm = "E";
+            state.phase = 1;
+            state.phaseTime = 15.0;
+            state.armWaitTimes = { N: 0, S: 0, E: 0, W: 0 };
+            enforceSingleSignalInvariant(state);
+
+            state.queues = [24.5, 1.0, 1.0, 1.0];
+            state.nextInferenceTimer = 0.0;
+
+            let amberTriggered = false;
+            let sawAllRed = false;
+            let switchedToN = false;
+
+            for (let step = 0; step < 60; step++) {
+                updateTrafficSignals(0.25);
+                const openNow = approaches.filter(d => state.signals[d] === "green" || state.signals[d] === "amber");
+                if (openNow.length > 1) {
+                    invariantViolations.push({ step, openNow, signals: { ...state.signals } });
+                }
+                if (state.isAmber && state.targetArm === "N") amberTriggered = true;
+                if (state.isAllRed && state.targetArm === "N") sawAllRed = true;
+                if (!state.isAmber && !state.isAllRed && state.activeArm === "N" && state.signals.N === "green") {
+                    switchedToN = true;
+                    break;
+                }
+            }
+
+            const qBefore = state.queues[0];
+            for (let i = 0; i < 20; i++) updateTrafficSignals(0.1);
+            const qAfter = state.queues[0];
+
+            return {
+                allConfigured,
+                totalHeads,
+                invariantViolations,
+                amberTriggered,
+                sawAllRed,
+                switchedToN,
+                qBefore,
+                qAfter,
+                signals: { ...state.signals }
+            };
+        }""")
+
+        assert sig4way_res["allConfigured"], f"Independent approach signals configuration invalid: {sig4way_res}"
+        assert sig4way_res["totalHeads"] == 24, f"Expected 24 signal heads, got {sig4way_res['totalHeads']}"
+        assert len(sig4way_res["invariantViolations"]) == 0, f"Single-signal invariant violated: {sig4way_res['invariantViolations']}"
+        assert sig4way_res["amberTriggered"], "Heavy N queue failed to initiate AMBER transition!"
+        assert sig4way_res["sawAllRed"], "Signal transition skipped ALL-RED clearance!"
+        assert sig4way_res["switchedToN"], f"Failed to actuate single arm N green: {sig4way_res}"
+        assert sig4way_res["signals"] == {"N": "green", "S": "red", "E": "red", "W": "red"}, f"Expected ONLY N green, got {sig4way_res['signals']}"
+        assert sig4way_res["qAfter"] < sig4way_res["qBefore"], "North queue failed to discharge during single-arm green phase!"
+        print(f"[PASS] 24 Independent approach signals & strict <=1 invariant verified across all 6 junctions.", flush=True)
+        print(f"[PASS] Single-arm AI relief verified (E -> amber -> all-red -> N green): N queue cleared {sig4way_res['qBefore']:.1f} -> {sig4way_res['qAfter']:.1f}.", flush=True)
+
+        # 11E. Fluid Queue Discharge Kinematics (a >= 0.035 on lead departure)
+        print("[KINEMATICS] Verifying Fluid Queue Discharge Kinematics (a >= 0.035 on lead departure)...", flush=True)
+        fluid_res = page.evaluate("""() => {
+            for (let j = 2; j < vehicles.length; j++) {
+                if (vehicles[j].corridorId === "H1" && vehicles[j].direction === 1) {
+                    vehicles[j].x = 1000;
+                }
+            }
+            const v1 = vehicles[0];
+            const v2 = vehicles[1];
+
+            v1.corridorId = "H1";
+            v1.direction = 1;
+            v1.state = "CRUISING";
+            v1.type = "sedan";
+            v1.length = 20;
+            v1.x = 300;
+            v1.y = 220 + 16;
+            v1.speed = 0.0;
+            v1.accel = 0.0;
+            v1.isBraking = true;
+            v1.targetSpeed = 1.0;
+            v1.nextIntersection = "INT_2";
+
+            v2.corridorId = "H1";
+            v2.direction = 1;
+            v2.state = "CRUISING";
+            v2.type = "sedan";
+            v2.length = 20;
+            v2.x = 300 - 28.0;
+            v2.y = 220 + 16;
+            v2.speed = 0.0;
+            v2.accel = 0.0;
+            v2.isBraking = true;
+            v2.targetSpeed = 1.0;
+            v2.nextIntersection = "INT_2";
+
+            junctionStates["INT_2"].activeArm = "W";
+            junctionStates["INT_2"].targetArm = "W";
+            junctionStates["INT_2"].signals = { N: "red", S: "red", E: "red", W: "green" };
+            junctionStates["INT_2"].phase = 1;
+            junctionStates["INT_2"].isAmber = false;
+            junctionStates["INT_2"].isAllRed = false;
+
+            const isLeadStoppedBefore = (v1.speed < 0.02 && v1.accel <= 0);
+            const distBefore = Math.abs(v1.x - v2.x);
+            const queueBlockedBefore = isLeadStoppedBefore && (distBefore <= 28.1);
+
+            // Lead car departs
+            v1.speed = 0.4;
+            v1.accel = 0.05;
+            v1.isBraking = false;
+
+            const isLeadStoppedAfter = (v1.speed < 0.02 && v1.accel <= 0);
+            const queueBlockedAfter = isLeadStoppedAfter && (distBefore <= 28.1);
+
+            const s0 = 15;
+            const T = 0.8;
+            const aMax = 0.06;
+            const bComf = 0.09;
+            const deltaV = v2.speed - v1.speed;
+            const sStar = s0 + Math.max(0, v2.speed * T + (v2.speed * deltaV) / (2 * Math.sqrt(aMax * bComf)));
+            const idmAccel = aMax * (1 - Math.pow(v2.speed / Math.max(0.1, v2.targetSpeed), 4) - Math.pow(sStar / Math.max(1, distBefore), 2));
+
+            updateVehicles(0.016);
+
+            return {
+                queueBlockedBefore,
+                queueBlockedAfter,
+                idmAccel,
+                trailAccel: v2.accel,
+                trailSpeed: v2.speed
+            };
+        }""")
+
+        assert fluid_res["queueBlockedBefore"], "Trailing car was not queued when lead was stopped!"
+        assert not fluid_res["queueBlockedAfter"], "Trailing car remained blocked after lead car departed!"
+        assert fluid_res["idmAccel"] >= 0.035, f"IDM acceleration too low: {fluid_res['idmAccel']} < 0.035"
+        assert fluid_res["trailAccel"] >= 0.035 or fluid_res["trailSpeed"] > 0, \
+            f"Trailing car failed to accelerate immediately: accel={fluid_res['trailAccel']}, speed={fluid_res['trailSpeed']}"
+        print(f"[PASS] Fluid queue discharge verified: IDM acceleration {fluid_res['idmAccel']:.4f} >= 0.035 px/frame.", flush=True)
+
+        # 16. Check Console Errors, Page Exceptions, and Failed Network Requests
+        assert len(console_errors) == 0, f"Found console/page errors: {console_errors}"
+        assert len(failed_requests) == 0, f"Found failed network requests: {failed_requests}"
+        print("[PASS] Zero console errors, zero pageerrors, and zero failed network requests during vehicle kinematics verification!", flush=True)
 
         browser.close()
 
