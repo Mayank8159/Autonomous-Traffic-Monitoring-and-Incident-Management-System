@@ -174,10 +174,46 @@ ROAD_SEGMENTS = [
 ]
 
 
+APPROACH_NAMES = ("North", "South", "East", "West")
+APPROACH_CODES = ("N", "S", "E", "W")
+_APPROACH_LOOKUP = {
+    "n": 0, "north": 0,
+    "s": 1, "south": 1,
+    "e": 2, "east": 2,
+    "w": 3, "west": 3,
+}
+
+
+def parse_approach_action(val):
+    """
+    Parse a manual signal action into either:
+    - ('axis', 0|1) for legacy 2-phase actions (0=NS, 1=EW)
+    - ('arm', 0..3) for independent 4-approach control ('N'|'S'|'E'|'W' or 'North'|'South'|'East'|'West')
+    Raises ValueError on invalid inputs.
+    """
+    if isinstance(val, bool):
+        raise ValueError(f"Invalid boolean signal action: {val!r}")
+    if isinstance(val, (int, np.integer)):
+        iv = int(val)
+        if iv in (0, 1):
+            return ("axis", iv)
+        raise ValueError(f"Numeric action must be 0 or 1, got {iv}")
+    if isinstance(val, str):
+        key = val.strip().lower()
+        if key in _APPROACH_LOOKUP:
+            return ("arm", _APPROACH_LOOKUP[key])
+        if key in ("0", "1"):
+            return ("axis", int(key))
+        raise ValueError(f"Unknown approach/action string: {val!r}")
+    raise ValueError(f"Unsupported signal action type: {type(val).__name__}")
+
+
 class IntersectionState:
     """
     Physical state machine and queue dynamics for an individual 4-way intersection.
     Approaches: 0: North, 1: South, 2: East, 3: West.
+    Enforces strict single-approach mutual exclusion: at most ONE of {N, S, E, W}
+    is GREEN or AMBER at any time, transitioning through AMBER -> ALL-RED -> GREEN.
     """
     def __init__(self, node_id, config, initial_queues=None):
         self.node_id = node_id
@@ -191,15 +227,23 @@ class IntersectionState:
         else:
             self.queues = np.array([4.0, 4.0, 4.0, 4.0], dtype=np.float32)
 
-        self.phase = 0          # 0 = NS Green, 1 = EW Green
+        # Pick initial active single arm with largest initial queue (tie-break: North=0)
+        self.active_approach = int(np.argmax(self.queues))
+        self.target_approach = self.active_approach
+        self.phase = 0 if self.active_approach in (0, 1) else 1  # 0 = NS axis, 1 = EW axis
         self.phase_counter = 1  # Steps elapsed in current phase
         self.min_green = 3      # Minimum green duration steps before transition allowed
         self.is_yellow = False  # Yellow / Amber transition state
         self.yellow_timer = 0
+        self.is_all_red = False # All-red clearance interval before next green arm
+        self.all_red_timer = 0
         self.preemption = False # Emergency vehicle green wave active
         self.preemption_target_phase = 0
-        self.last_action = 0
+        self.preemption_target_approach = 0
+        self.last_action = self.phase
         self.probs = [0.5, 0.5]
+        self.wait_timers = [0, 0, 0, 0]
+        self.arm_scores = [float(round(float(q), 4)) for q in self.queues]
 
         # ML Model Outputs & Anomaly Detection Telemetry
         self.queue_history = collections.deque(maxlen=5)
@@ -224,26 +268,79 @@ class IntersectionState:
             total, p0, p1
         ], dtype=np.float32)
 
-    def apply_action(self, action):
-        """Apply signal action (0 or 1) with min_green and yellow transition."""
-        action = int(action)
+    def compute_arm_scores(self, probs, wait_bonus=0.35):
+        """
+        Scores all 4 individual approaches [N, S, E, W] independently by combining
+        RL policy axis probabilities [p_ns, p_ew], per-arm queue demand, and
+        starvation-prevention wait timers.
+        """
+        p_ns = float(probs[0])
+        p_ew = float(probs[1])
+        scores = []
+        for idx in range(4):
+            axis_p = p_ns if idx in (0, 1) else p_ew
+            q = float(self.queues[idx])
+            w = float(self.wait_timers[idx])
+            scores.append(q * (1.0 + 0.5 * axis_p) + wait_bonus * w)
+        self.arm_scores = [float(round(s, 4)) for s in scores]
+        return scores
+
+    def _update_wait_timers(self):
+        """Increments wait timers for all RED approaches and resets active GREEN arm."""
+        for idx in range(4):
+            if not self.is_yellow and not self.is_all_red and idx == self.active_approach:
+                self.wait_timers[idx] = 0
+            else:
+                self.wait_timers[idx] += 1
+
+    def apply_action(self, action, target_approach=None):
+        """
+        Apply signal action (0/1 axis or explicit 0..3 approach) with strict
+        single-approach mutual exclusion, latched target transitions, and
+        AMBER -> ALL-RED -> GREEN clearance.
+        """
         if self.preemption:
-            action = self.preemption_target_phase
+            desired_approach = int(self.preemption_target_approach) % 4
+        elif target_approach is not None:
+            desired_approach = int(target_approach) % 4
+        else:
+            axis = 0 if int(action) == 0 else 1
+            pair = (0, 1) if axis == 0 else (2, 3)
+            # If current active arm is already on the requested axis and no specific
+            # arm was requested, keep it unless the opposite arm on the same axis
+            # has significantly higher demand/wait.
+            if self.active_approach in pair:
+                other = pair[1] if self.active_approach == pair[0] else pair[0]
+                if self.arm_scores[other] > self.arm_scores[self.active_approach] * 1.15:
+                    desired_approach = other
+                else:
+                    desired_approach = self.active_approach
+            else:
+                desired_approach = pair[0] if self.arm_scores[pair[0]] >= self.arm_scores[pair[1]] else pair[1]
 
         if self.is_yellow:
             self.yellow_timer -= 1
             if self.yellow_timer <= 0:
                 self.is_yellow = False
-                self.phase = action
-                self.phase_counter = 1
+                self.is_all_red = True
+                self.all_red_timer = 1
+            self._update_wait_timers()
             return
 
-        if self.phase_counter == 0:
-            self.phase = action
-            self.phase_counter = 1
-        elif action != self.phase:
-            if self.phase_counter >= self.min_green:
-                # Trigger smooth amber transition (1 step)
+        if self.is_all_red:
+            self.all_red_timer -= 1
+            if self.all_red_timer <= 0:
+                self.is_all_red = False
+                self.active_approach = self.target_approach
+                self.phase = 0 if self.active_approach in (0, 1) else 1
+                self.phase_counter = 1
+            self._update_wait_timers()
+            return
+
+        if desired_approach != self.active_approach:
+            # Preemption initiates amber clearance immediately; normal switching respects min_green
+            if self.preemption or self.phase_counter >= self.min_green:
+                self.target_approach = desired_approach
                 self.is_yellow = True
                 self.yellow_timer = 1
             else:
@@ -251,24 +348,24 @@ class IntersectionState:
         else:
             self.phase_counter += 1
 
+        self._update_wait_timers()
+
     def step_traffic(self, arrivals, blockage_factors=None):
         """
-        Discharges queues according to physical saturation flow and accumulates arrivals.
-        Flow rate: 0.95 veh/step under green. Blockage factors simulate physical obstruction.
+        Discharges ONLY the single active GREEN approach according to physical
+        saturation flow (3.80 veh/step concentrated on the single open approach,
+        calibrated for 1-of-4 green duty cycle with amber + all-red clearance)
+        and accumulates arrivals. Never discharges 2 approaches simultaneously.
         """
-        discharge_rate = 0.95
+        discharge_rate = 3.80
         if blockage_factors is None:
             blockage_factors = np.ones(4, dtype=np.float32)
 
-        # Departures: North=0, South=1, East=2, West=3
+        # Departures: North=0, South=1, East=2, West=3 (strictly single approach)
         depart_demanded = np.zeros(4, dtype=np.float32)
-        if not self.is_yellow:
-            if self.phase == 0:  # NS Green
-                depart_demanded[0] = discharge_rate * blockage_factors[0]
-                depart_demanded[1] = discharge_rate * blockage_factors[1]
-            else:                # EW Green
-                depart_demanded[2] = discharge_rate * blockage_factors[2]
-                depart_demanded[3] = discharge_rate * blockage_factors[3]
+        if not self.is_yellow and not self.is_all_red:
+            app = self.active_approach
+            depart_demanded[app] = discharge_rate * blockage_factors[app]
 
         actual_depart = np.minimum(self.queues, depart_demanded)
         self.last_departed = actual_depart.copy()
@@ -288,6 +385,7 @@ class CityNetworkEnv:
         self.max_steps = max_steps
         self.device = device
         self.step_idx = 0
+        self._incident_seq = 0
         self.intersections = {}
         self.active_incidents = []
         self.active_dispatches = []
@@ -361,6 +459,7 @@ class CityNetworkEnv:
     def reset(self):
         """Resets all intersections to calibrated initial states and clears active incidents."""
         self.step_idx = 0
+        self._incident_seq = 0
         self.intersections = {
             node_id: IntersectionState(node_id, data)
             for node_id, data in INTERSECTIONS.items()
@@ -403,6 +502,8 @@ class CityNetworkEnv:
         """Returns comprehensive telemetry state for all intersections."""
         data = {}
         for node_id, inter in self.intersections.items():
+            active_arm = None if inter.is_all_red else APPROACH_CODES[inter.active_approach]
+            active_approach = None if inter.is_all_red else APPROACH_NAMES[inter.active_approach]
             data[node_id] = {
                 "id": node_id,
                 "name": inter.config["name"],
@@ -413,6 +514,11 @@ class CityNetworkEnv:
                 "total_vehicles": float(round(float(np.sum(inter.queues)), 1)),
                 "phase": int(inter.phase),
                 "is_yellow": bool(inter.is_yellow),
+                "is_all_red": bool(inter.is_all_red),
+                "active_arm": active_arm,
+                "active_approach": active_approach,
+                "wait_timers": [int(w) for w in inter.wait_timers],
+                "arm_scores": [float(round(float(s), 4)) for s in inter.arm_scores],
                 "phase_counter": int(inter.phase_counter),
                 "preemption": bool(inter.preemption),
                 "action": int(inter.last_action),
@@ -427,16 +533,17 @@ class CityNetworkEnv:
         return data
 
     def _get_lights_state(self, inter):
-        """Returns active colors (RED, AMBER, GREEN) for all 4 approaches."""
-        if inter.is_yellow:
-            if inter.phase == 0:
-                return {"North": "AMBER", "South": "AMBER", "East": "RED", "West": "RED"}
-            else:
-                return {"North": "RED", "South": "RED", "East": "AMBER", "West": "AMBER"}
-        elif inter.phase == 0:
-            return {"North": "GREEN", "South": "GREEN", "East": "RED", "West": "RED"}
-        else:
-            return {"North": "RED", "South": "RED", "East": "GREEN", "West": "GREEN"}
+        """
+        Returns active colors (RED, AMBER, GREEN) for all 4 approaches.
+        Enforces strict single-approach mutual exclusion: at most ONE approach
+        is GREEN or AMBER at any time; all others are RED (all 4 RED during clearance).
+        """
+        lights = {name: "RED" for name in APPROACH_NAMES}
+        if inter.is_all_red:
+            return lights
+        active_name = APPROACH_NAMES[inter.active_approach]
+        lights[active_name] = "AMBER" if inter.is_yellow else "GREEN"
+        return lights
 
     def shortest_path(self, start_node, end_node):
         """Dijkstra shortest path algorithm on intersection network."""
@@ -464,27 +571,33 @@ class CityNetworkEnv:
         Spawns an interactive incident at an intersection with deterministic placement (ZERO randomizers).
         Types: 'collision', 'hazard', 'medical'.
         """
-        if location_node is None:
-            # Deterministically pick the intersection with highest total congestion
-            location_node = max(
-                self.intersections.keys(),
-                key=lambda k: float(np.sum(self.intersections[k].queues))
-            )
+        if location_node is None or location_node not in self.intersections:
+            if location_node is None:
+                # Deterministically pick the intersection with highest total congestion
+                location_node = max(
+                    self.intersections.keys(),
+                    key=lambda k: float(np.sum(self.intersections[k].queues))
+                )
+            else:
+                location_node = "INT_2"
 
-        target = INTERSECTIONS.get(location_node, INTERSECTIONS["INT_2"])
+        target = INTERSECTIONS[location_node]
         inter = self.intersections[location_node]
 
-        # Determine blocked approach deterministically
-        if blocked_approach is None:
+        # Normalize or deterministically choose blocked approach
+        if blocked_approach is not None:
+            key = str(blocked_approach).strip().lower()
+            app_idx = _APPROACH_LOOKUP.get(key, None)
+            blocked_approach = APPROACH_NAMES[app_idx] if app_idx is not None else "North"
+        else:
             # Block the approach with the highest queue, or by canonical incident type
             worst_app = int(np.argmax(inter.queues))
-            approach_names = ["North", "South", "East", "West"]
             if incident_type == "collision":
                 blocked_approach = "East" if inter.queues[2] >= inter.queues[0] else "North"
             elif incident_type == "hazard":
                 blocked_approach = "North"
             else:
-                blocked_approach = approach_names[worst_app]
+                blocked_approach = APPROACH_NAMES[worst_app]
 
         # Compute deterministic approach lane coordinate offset
         offsets = {
@@ -494,19 +607,20 @@ class CityNetworkEnv:
             "West": (-32, 0),
         }
         dx, dy = offsets.get(blocked_approach, (0, 0))
-        target_x = x if x is not None else target["x"] + dx
-        target_y = y if y is not None else target["y"] + dy
+        target_x = float(x) if x is not None else float(target["x"] + dx)
+        target_y = float(y) if y is not None else float(target["y"] + dy)
 
         severity = 3 if incident_type == "collision" else (2 if incident_type == "hazard" else 1)
         # Blockage capacity: collision blocks 85% (0.15 flow capacity), hazard blocks 70%, medical blocks 50%
         blockage_capacity = 0.15 if incident_type == "collision" else (0.30 if incident_type == "hazard" else 0.50)
 
-        incident_id = f"INC-{len(self.active_incidents) + 1:03d}"
+        self._incident_seq += 1
+        incident_id = f"INC-{self._incident_seq:03d}"
         incident = {
             "id": incident_id,
             "type": incident_type,
             "node_id": location_node,
-            "name": f"{incident_type.title()} at {target['name']}",
+            "name": f"{str(incident_type).title()} at {target['name']}",
             "streets": target["streets"],
             "x": target_x,
             "y": target_y,
@@ -524,11 +638,32 @@ class CityNetworkEnv:
         incident["dispatch"] = dispatch_info
         return incident
 
+    def _route_approach_for_node(self, route, idx, fallback_approach=0):
+        """Determines which single approach (0..3) of route[idx] serves the emergency route."""
+        node = route[idx]
+        neighbors = INTERSECTIONS.get(node, {}).get("neighbors", {})
+        # Prefer the incoming approach from the previous node along the route
+        if idx > 0:
+            prev_node = route[idx - 1]
+            for dir_name, neighbor_id in neighbors.items():
+                if neighbor_id == prev_node:
+                    return _APPROACH_LOOKUP[dir_name.lower()]
+        # If starting at this node, align with outgoing axis/approach if available
+        if idx + 1 < len(route):
+            next_node = route[idx + 1]
+            for dir_name, neighbor_id in neighbors.items():
+                if neighbor_id == next_node:
+                    # Opposite incoming arm feeds straight toward next_node
+                    opp = {"North": 1, "South": 0, "East": 3, "West": 2}[dir_name]
+                    return opp
+        return fallback_approach
+
     def dispatch_emergency(self, incident):
         """
         Calculates shortest path emergency routes and activates AI Green Wave Preemption.
         """
         inc_node = incident["node_id"]
+        inc_app_idx = _APPROACH_LOOKUP.get(str(incident.get("blocked_approach", "North")).lower(), 0)
 
         # Find closest police precinct
         police_stations = [f for f in FACILITIES.values() if f["type"] == "police"]
@@ -545,6 +680,14 @@ class CityNetworkEnv:
             key=lambda f: math.hypot(f["x"] - incident["x"], f["y"] - incident["y"])
         )
         hospital_route = self.shortest_path(closest_hospital["nearest_node"], inc_node)
+
+        corridor_approaches = {}
+        for route in (police_route, hospital_route):
+            for idx, node in enumerate(route):
+                if node in self.intersections:
+                    corridor_approaches[node] = self._route_approach_for_node(
+                        route, idx, fallback_approach=inc_app_idx
+                    )
 
         dispatch_record = {
             "incident_id": incident["id"],
@@ -565,10 +708,30 @@ class CityNetworkEnv:
                 "eta_sec": len(hospital_route) * 5 + 6,
             },
             "preemption_corridor": list(set(police_route + hospital_route)),
+            "preemption_approaches": corridor_approaches,
         }
         self.active_dispatches.append(dispatch_record)
-        self._apply_preemption(dispatch_record["preemption_corridor"])
+        self._recompute_preemption()
         return dispatch_record
+
+    def _recompute_preemption(self):
+        """Recomputes active Green Wave preemption across all remaining active dispatches."""
+        for inter in self.intersections.values():
+            inter.preemption = False
+        self.preemption_active = False
+
+        for disp in self.active_dispatches:
+            approaches = disp.get("preemption_approaches", {})
+            if approaches:
+                for node, app_idx in approaches.items():
+                    if node in self.intersections:
+                        inter = self.intersections[node]
+                        inter.preemption = True
+                        inter.preemption_target_approach = int(app_idx) % 4
+                        inter.preemption_target_phase = 0 if inter.preemption_target_approach in (0, 1) else 1
+                        self.preemption_active = True
+            else:
+                self._apply_preemption(disp.get("preemption_corridor", []))
 
     def _apply_preemption(self, corridor_nodes):
         """Activates Green Wave signal preemption along travel corridor."""
@@ -577,17 +740,16 @@ class CityNetworkEnv:
             if node in self.intersections:
                 inter = self.intersections[node]
                 inter.preemption = True
-                # Favor EW corridor along horizontal thoroughfare (Main St/River Rd) else NS
-                inter.preemption_target_phase = 1 if node in ["INT_1", "INT_2", "INT_3"] else 0
+                # Default single approach along corridor if no explicit route mapping
+                app_idx = 2 if node in ["INT_1", "INT_2", "INT_3"] else 0
+                inter.preemption_target_approach = app_idx
+                inter.preemption_target_phase = 0 if app_idx in (0, 1) else 1
 
     def resolve_incident(self, incident_id):
-        """Resolves an active incident and returns signals to normal autonomous control."""
+        """Resolves an active incident and returns affected signals to normal autonomous control."""
         self.active_incidents = [i for i in self.active_incidents if i["id"] != incident_id]
         self.active_dispatches = [d for d in self.active_dispatches if d["incident_id"] != incident_id]
-        if not self.active_incidents:
-            self.preemption_active = False
-            for inter in self.intersections.values():
-                inter.preemption = False
+        self._recompute_preemption()
 
     def _compute_deterministic_arrival(self, node_id, app_idx):
         """
@@ -609,9 +771,20 @@ class CityNetworkEnv:
     def step(self, actions=None):
         """
         Executes one synchronized simulation step across the entire city network.
-        Guarantees strict corridor vehicle conservation, PyTorch DQN/MLP policy actuation,
-        Sequence VAE reconstruction residuals, and ZERO randomizers.
+        Guarantees strict single-approach signal mutual exclusion, corridor vehicle
+        conservation, PyTorch DQN/MLP policy actuation, Sequence VAE reconstruction
+        residuals, and ZERO randomizers.
         """
+        if actions is not None and not isinstance(actions, dict):
+            raise ValueError("actions must be a dict mapping node_id to signal action or None")
+
+        # Validate explicit actions before mutating state
+        parsed_actions = {}
+        if actions:
+            for node_id, raw_act in actions.items():
+                if node_id in self.intersections:
+                    parsed_actions[node_id] = parse_approach_action(raw_act)
+
         self.step_idx += 1
         total_departed = 0.0
         total_external_inflow = 0.0
@@ -622,33 +795,57 @@ class CityNetworkEnv:
         for inc in self.active_incidents:
             node = inc["node_id"]
             if node in blockages:
-                app_idx = {"North": 0, "South": 1, "East": 2, "West": 3}.get(inc["blocked_approach"], 0)
+                app_idx = _APPROACH_LOOKUP.get(str(inc.get("blocked_approach", "North")).lower(), 0)
                 cap = inc.get("blockage_capacity", 0.15)
                 blockages[node][app_idx] = float(cap)
 
-        # 2. Select actions via PyTorch RL Policy (models/rl_policy.pt) or manual override
+        # 2. Select single-approach actions via PyTorch RL Policy (models/rl_policy.pt) + 4-arm scoring
         for node_id, inter in self.intersections.items():
-            if actions and node_id in actions:
-                act = int(actions[node_id])
-                inter.probs = [1.0 if act == 0 else 0.0, 1.0 if act == 1 else 0.0]
-            elif self.policy_model is not None:
+            # Always evaluate RL policy probs on current 7-D state so telemetry stays coherent
+            if self.policy_model is not None:
                 st_7d = inter.get_state_7d()
                 with torch.no_grad():
                     inp_t = torch.from_numpy(st_7d).unsqueeze(0).to(self.device)
                     out_p = self.policy_model(inp_t)
                     probs = out_p.squeeze(0).cpu().numpy().tolist()
                     inter.probs = [float(round(probs[0], 4)), float(round(probs[1], 4))]
-                    act = int(np.argmax(probs))
             else:
-                # Deterministic backlog heuristic fallback if model unavailable
                 ns_q = inter.queues[0] + inter.queues[1]
                 ew_q = inter.queues[2] + inter.queues[3]
-                act = 0 if ns_q >= ew_q else 1
                 tot = ns_q + ew_q + 1e-5
                 inter.probs = [float(round(ns_q / tot, 4)), float(round(ew_q / tot, 4))]
 
+            arm_scores = inter.compute_arm_scores(inter.probs)
+
+            if node_id in parsed_actions:
+                kind, val = parsed_actions[node_id]
+                if kind == "arm":
+                    target_app = val
+                    act = 0 if val in (0, 1) else 1
+                    inter.probs = [1.0 if act == 0 else 0.0, 1.0 if act == 1 else 0.0]
+                else:
+                    act = val
+                    inter.probs = [1.0 if act == 0 else 0.0, 1.0 if act == 1 else 0.0]
+                    target_app = None
+            else:
+                best_app = int(np.argmax(arm_scores))
+                cur_app = inter.active_approach
+                # Switch only when another arm clearly exceeds current arm or current queue is nearly drained
+                if (
+                    best_app != cur_app
+                    and (
+                        arm_scores[best_app] > arm_scores[cur_app] * 1.10
+                        or inter.queues[cur_app] < 0.35
+                        or inter.wait_timers[best_app] >= 8
+                    )
+                ):
+                    target_app = best_app
+                else:
+                    target_app = cur_app
+                act = 0 if target_app in (0, 1) else 1
+
             inter.last_action = act
-            inter.apply_action(act)
+            inter.apply_action(act, target_approach=target_app)
 
         # 3. Collect arrivals: External commuter demand + in-transit corridor arrivals
         # Implements true physical vehicle conservation across the city network

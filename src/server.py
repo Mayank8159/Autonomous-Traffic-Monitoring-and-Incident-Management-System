@@ -13,6 +13,7 @@ Provides:
 import os
 import sys
 import json
+import math
 import time
 import threading
 import traceback
@@ -271,21 +272,23 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
 
         # Status endpoint
         if path == "/api/status":
-            models_status = {
-                "custom_cnn": os.path.exists(os.path.join(ROOT_DIR, "models", "custom_cnn.pt")) and getattr(_city_env, "custom_cnn", None) is not None,
-                "sequence_gan": os.path.exists(os.path.join(ROOT_DIR, "models", "sequence_gan.pt")) and getattr(_city_env, "gan_generator", None) is not None,
-                "sequence_vae": os.path.exists(os.path.join(ROOT_DIR, "models", "sequence_vae.pt")) and getattr(_city_env, "vae_model", None) is not None,
-                "rl_policy": os.path.exists(os.path.join(ROOT_DIR, "models", "rl_policy.pt")) and getattr(_city_env, "policy_model", None) is not None,
-            }
+            with _city_lock:
+                models_status = {
+                    "custom_cnn": os.path.exists(os.path.join(ROOT_DIR, "models", "custom_cnn.pt")) and getattr(_city_env, "custom_cnn", None) is not None,
+                    "sequence_gan": os.path.exists(os.path.join(ROOT_DIR, "models", "sequence_gan.pt")) and getattr(_city_env, "gan_generator", None) is not None,
+                    "sequence_vae": os.path.exists(os.path.join(ROOT_DIR, "models", "sequence_vae.pt")) and getattr(_city_env, "vae_model", None) is not None,
+                    "rl_policy": os.path.exists(os.path.join(ROOT_DIR, "models", "rl_policy.pt")) and getattr(_city_env, "policy_model", None) is not None,
+                }
+                city_summary = {
+                    "intersections": len(INTERSECTIONS),
+                    "active_incidents": len(_city_env.active_incidents),
+                    "step": int(_city_env.step_idx),
+                }
             resp = {
                 "status": "ready",
                 "message": "ATMS Server Operational",
                 "models": models_status,
-                "city_network": {
-                    "intersections": len(INTERSECTIONS),
-                    "active_incidents": len(_city_env.active_incidents),
-                    "step": _city_env.step_idx,
-                }
+                "city_network": city_summary,
             }
             with _job_lock:
                 resp["job"] = {
@@ -387,11 +390,15 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
             self._send_json_response({"error": f"Unknown endpoint {path}"}, code=404)
 
     def _read_json_body(self):
-        length = int(self.headers.get("Content-Length", 0))
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            return {}
         if length > 0:
             raw = self.rfile.read(length)
             try:
-                return json.loads(raw.decode("utf-8"))
+                parsed = json.loads(raw.decode("utf-8"))
+                return parsed if isinstance(parsed, dict) else {}
             except Exception:
                 return {}
         return {}
@@ -399,8 +406,15 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
     def handle_city_step(self):
         body = self._read_json_body()
         actions = body.get("actions", None)
+        if actions is not None and not isinstance(actions, dict):
+            self._send_json_response({"error": "'actions' must be an object mapping intersection IDs to signal actions"}, code=400)
+            return
         with _city_lock:
-            state, reward, done, info = _city_env.step(actions)
+            try:
+                state, reward, done, info = _city_env.step(actions)
+            except (ValueError, TypeError) as exc:
+                self._send_json_response({"error": str(exc)}, code=400)
+                return
             payload = {
                 "state": state,
                 "reward": float(reward),
@@ -413,8 +427,22 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
         body = self._read_json_body()
         node_id = body.get("node_id", None)
         inc_type = body.get("type", "collision")
+        if not isinstance(inc_type, str) or not inc_type.strip():
+            inc_type = "collision"
         x = body.get("x", None)
         y = body.get("y", None)
+        try:
+            if x is not None:
+                x = float(x)
+                if not math.isfinite(x):
+                    raise ValueError("x must be finite")
+            if y is not None:
+                y = float(y)
+                if not math.isfinite(y):
+                    raise ValueError("y must be finite")
+        except (TypeError, ValueError):
+            self._send_json_response({"error": "Incident coordinates x and y must be finite numbers"}, code=400)
+            return
         approach = body.get("blocked_approach", None)
         with _city_lock:
             incident = _city_env.trigger_incident(
@@ -447,7 +475,16 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
     def handle_gan_generate(self):
         body = self._read_json_body()
         scenario = body.get("scenario", "rush_hour")
-        num_samples = int(body.get("num_samples", 1))
+        if not isinstance(scenario, str) or not scenario.strip():
+            scenario = "rush_hour"
+        try:
+            num_samples = int(body.get("num_samples", 1))
+        except (TypeError, ValueError):
+            self._send_json_response({"error": "num_samples must be an integer"}, code=400)
+            return
+        if num_samples < 1 or num_samples > 50:
+            self._send_json_response({"error": "num_samples must be between 1 and 50"}, code=400)
+            return
         with _city_lock:
             scenarios = _city_env.generate_traffic_scenarios(scenario_type=scenario, num_samples=num_samples)
             # Serialize numpy arrays if present
@@ -461,65 +498,96 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
                     "validated": sc.get("validated", False),
                     "status": sc.get("status", "generated")
                 })
-            payload = json.dumps({"scenario": scenario, "results": formatted}).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(payload)
+        self._send_json_response({"scenario": scenario, "results": formatted})
 
     def handle_vae_detect(self):
         body = self._read_json_body()
         seq = body.get("sequence", None)
-        if not seq or len(seq) < 5:
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": "Sequence of length >= 5 required"}).encode("utf-8"))
+        if not isinstance(seq, (list, tuple)) or len(seq) < 5:
+            self._send_json_response({"error": "Sequence of length >= 5 required"}, code=400)
             return
+
+        cleaned_seq = []
+        for row in seq:
+            if not isinstance(row, (list, tuple)) or len(row) != 4:
+                self._send_json_response({"error": "Each sequence step must be a 4-element numeric vector"}, code=400)
+                return
+            try:
+                vals = [float(v) for v in row]
+            except (TypeError, ValueError):
+                self._send_json_response({"error": "Sequence values must be numeric"}, code=400)
+                return
+            if any(isinstance(v, bool) for v in row) or not all(math.isfinite(v) for v in vals):
+                self._send_json_response({"error": "Sequence values must be finite numbers"}, code=400)
+                return
+            cleaned_seq.append(vals)
 
         with _city_lock:
             if _city_env.vae_model is not None:
                 from src.vae import detect_incident_anomaly
                 import numpy as np
-                seq_np = np.array(seq, dtype=np.float32)
+                seq_np = np.array(cleaned_seq, dtype=np.float32)
                 res = detect_incident_anomaly(_city_env.vae_model, seq_np, _city_env.vae_th_warn, _city_env.vae_th_crit, device=_city_env.device)
-                payload = json.dumps(res).encode("utf-8")
             else:
-                payload = json.dumps({"error": "Sequence VAE model not loaded"}).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(payload)
+                res = {"error": "Sequence VAE model not loaded"}
+        self._send_json_response(res)
 
     def handle_policy_predict(self):
         body = self._read_json_body()
         st = body.get("state", None)
-        if not st or len(st) != 7:
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": "7-dimensional state vector required"}).encode("utf-8"))
+        if not isinstance(st, (list, tuple)) or len(st) != 7:
+            self._send_json_response({"error": "7-dimensional state vector required"}, code=400)
             return
+        try:
+            if any(isinstance(v, bool) for v in st):
+                raise ValueError("Boolean not allowed in state vector")
+            st_floats = [float(v) for v in st]
+            if not all(math.isfinite(v) for v in st_floats):
+                raise ValueError("Non-finite value in state vector")
+        except (TypeError, ValueError):
+            self._send_json_response({"error": "7-dimensional numeric state vector required"}, code=400)
+            return
+
+        wait_timers = body.get("wait_timers", None)
+        parsed_waits = None
+        if wait_timers is not None:
+            if not isinstance(wait_timers, (list, tuple)) or len(wait_timers) != 4:
+                self._send_json_response({"error": "wait_timers must be a 4-element numeric list"}, code=400)
+                return
+            try:
+                if any(isinstance(v, bool) for v in wait_timers):
+                    raise ValueError("Boolean not allowed")
+                parsed_waits = [float(v) for v in wait_timers]
+                if not all(math.isfinite(v) for v in parsed_waits):
+                    raise ValueError("Non-finite wait timer")
+            except (TypeError, ValueError):
+                self._send_json_response({"error": "wait_timers must be 4 finite numbers"}, code=400)
+                return
 
         with _city_lock:
             if _city_env.policy_model is not None:
                 import torch
                 import numpy as np
                 with torch.no_grad():
-                    inp_t = torch.tensor([st], dtype=torch.float32).to(_city_env.device)
+                    inp_t = torch.tensor([st_floats], dtype=torch.float32).to(_city_env.device)
                     out_p = _city_env.policy_model(inp_t)
                     probs = out_p.squeeze(0).cpu().numpy().tolist()
                     act = int(np.argmax(probs))
-                payload = json.dumps({
+                resp = {
                     "action": act,
                     "probs": [float(round(p, 6)) for p in probs]
-                }).encode("utf-8")
+                }
+                if parsed_waits is not None:
+                    p_ns, p_ew = float(probs[0]), float(probs[1])
+                    arm_scores = [
+                        float(round(st_floats[idx] * (1.0 + 0.5 * (p_ns if idx < 2 else p_ew)) + 0.35 * parsed_waits[idx], 4))
+                        for idx in range(4)
+                    ]
+                    resp["arm_scores"] = arm_scores
+                    resp["recommended_arm"] = ("N", "S", "E", "W")[int(np.argmax(arm_scores))]
             else:
-                payload = json.dumps({"error": "Policy model not loaded"}).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(payload)
+                resp = {"error": "Policy model not loaded"}
+        self._send_json_response(resp)
 
 
     def handle_process_video(self, parsed):
@@ -543,13 +611,13 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
         filename = os.path.basename(filename)
 
         content_type = self.headers.get("Content-Type", "")
-        content_length = int(self.headers.get("Content-Length", 0))
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            content_length = 0
 
         if content_length <= 0:
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": "Empty upload body"}).encode("utf-8"))
+            self._send_json_response({"error": "Empty upload body"}, code=400)
             return
 
         save_path = os.path.join(uploads_dir, filename)
@@ -601,7 +669,10 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
                 print(f"[Server] Transcoding warning: {e}")
                 playable_path = save_path
 
-        max_steps = int(query_params.get("max_steps", [100])[0])
+        try:
+            max_steps = max(1, min(1000, int(query_params.get("max_steps", [100])[0])))
+        except (TypeError, ValueError):
+            max_steps = 100
 
         # Initialize JOB and start background thread
         with _job_lock:

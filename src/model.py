@@ -91,7 +91,9 @@ def export_policy_weights_to_js(checkpoint_path="models/rl_policy.pt", output_pa
         "b3": ckpt["net.6.bias"].numpy().tolist(),
     }
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     js_template = f"""// web_visualizer/policy_weights.js
 // Autonomous Traffic Management System (ATMS) - Trained Deep RL Policy Weights
 // Auto-generated export from PyTorch checkpoint ({checkpoint_path})
