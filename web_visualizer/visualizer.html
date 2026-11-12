@@ -454,6 +454,82 @@
             animation: pulseAlert 1.2s infinite;
         }
 
+        /* Vehicle Chase Cam Telemetry HUD (Floating Neumorphic-Skeuomorphic Panel) */
+        .vehicle-telemetry-hud {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+            background: rgba(15, 23, 42, 0.94);
+            backdrop-filter: blur(14px);
+            border: 1px solid rgba(56, 189, 248, 0.4);
+            border-radius: 14px;
+            padding: 12px 14px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 0 16px rgba(56, 189, 248, 0.2);
+            z-index: 55;
+            animation: fadeInHud 0.25s ease-out;
+            user-select: none;
+        }
+
+        @keyframes fadeInHud {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .telemetry-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding-bottom: 8px;
+            margin-bottom: 8px;
+        }
+
+        .telemetry-pulse {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #06b6d4;
+            box-shadow: 0 0 8px #06b6d4;
+            animation: pulseAlert 1.2s infinite;
+            display: inline-block;
+        }
+
+        .telemetry-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .telemetry-stat {
+            background: rgba(0, 0, 0, 0.35);
+            padding: 6px 8px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .telemetry-stat .stat-label {
+            display: block;
+            font-size: 8.5px;
+            color: var(--text-dim);
+            font-weight: 750;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+        }
+
+        .telemetry-stat .stat-value {
+            display: block;
+            font-size: 11.5px;
+            color: var(--accent-cyan);
+            font-weight: 700;
+            font-family: "SF Mono", Menlo, monospace;
+            margin-top: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
         /* -------------------------------------------------------------
            CCTV VIDEO PERCEPTION (MODE 2 PRESERVED)
            ------------------------------------------------------------- */
@@ -791,6 +867,7 @@
         <button class="btn" onclick="triggerQuickPreset('collision')">💥 Crash at Downtown Core</button>
         <button class="btn" onclick="triggerQuickPreset('hazard')">⚠️ Hazard at Harbor Blvd</button>
         <button class="btn" onclick="resolveAllIncidents()">🧹 Clear Incidents</button>
+        <button class="btn" id="btnChaseCam" onclick="toggleChaseCam()">🚘 Chase Cam / Follow Car</button>
 
         <div style="margin-left:auto; display:flex; align-items:center; gap:7px;">
             <button class="btn" id="btnToggleProjection" onclick="toggleProjectionMode()">📐 View: 2.5D Isometric</button>
@@ -821,6 +898,41 @@
                 <button class="cam-btn" title="Focus Active Incident" onclick="focusIncidentCamera()">🚨</button>
                 <button class="cam-btn" title="Cycle Next Junction" onclick="cycleJunctionFocus()">🎯</button>
                 <button class="cam-btn" title="Toggle 2.5D Isometric / Elevated" onclick="toggleProjectionMode()">📐</button>
+                <button class="cam-btn" title="Chase Cam / Track Vehicle" onclick="toggleChaseCam()">🚘</button>
+            </div>
+
+            <!-- Vehicle Chase Cam Telemetry HUD (Floating Neumorphic Panel) -->
+            <div class="vehicle-telemetry-hud" id="vehicleChaseHud" style="display:none;">
+                <div class="telemetry-header">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span class="telemetry-pulse"></span>
+                        <span id="chaseVehicleTag" style="font-weight:800; font-family:'SF Mono',Menlo,monospace; color:var(--accent-cyan);">#TRF-1042</span>
+                        <span id="chaseVehicleType" style="background:rgba(56,189,248,0.18); color:var(--accent-cyan); font-size:9.5px; font-weight:750; padding:2px 6px; border-radius:4px; border:1px solid rgba(56,189,248,0.3);">SEDAN</span>
+                    </div>
+                    <button class="cam-btn" style="width:24px; height:24px; font-size:11px; border-radius:6px;" onclick="disengageChaseCam()" title="Exit Chase Cam">✕</button>
+                </div>
+                <div class="telemetry-grid">
+                    <div class="telemetry-stat">
+                        <span class="stat-label">Velocity</span>
+                        <span class="stat-value" id="chaseSpeed">48.2 <small style="font-size:9px; color:var(--text-dim);">km/h</small></span>
+                    </div>
+                    <div class="telemetry-stat">
+                        <span class="stat-label">Kinematic State</span>
+                        <span class="stat-value" id="chaseAction">Cruising</span>
+                    </div>
+                    <div class="telemetry-stat">
+                        <span class="stat-label">Active Corridor</span>
+                        <span class="stat-value" id="chaseStreet">Grand Avenue</span>
+                    </div>
+                    <div class="telemetry-stat">
+                        <span class="stat-label">Next Maneuver</span>
+                        <span class="stat-value" id="chaseNextManeuver">Proceed @ INT_2</span>
+                    </div>
+                </div>
+                <div style="display:flex; gap:6px; margin-top:8px;">
+                    <button class="btn" style="flex:1; padding:4px 8px; font-size:11px; justify-content:center;" onclick="cycleNextVehicleToFollow()">🔀 Follow Next Car</button>
+                    <button class="btn danger" style="padding:4px 8px; font-size:11px; justify-content:center;" onclick="disengageChaseCam()">Stop Following</button>
+                </div>
             </div>
 
             <!-- Floating Mini-Map Radar (CRT Phosphor GIS Scope) -->
@@ -1127,6 +1239,29 @@
             "INT_6": { id: "INT_6", name: "Harbor Terminal", streets: "Harbor Blvd & Market St", x: 880, y: 560, neighbors: { North: "INT_3", South: null, East: null, West: "INT_5" } }
         };
 
+        // City Road Corridors and Arterials (High-precision continuous kinematics graph)
+        const CORRIDORS = {
+            H1: { id: "H1", name: "Grand Avenue", y: 220, isHorizontal: true, intersections: ["INT_1", "INT_2", "INT_3"] },
+            H2: { id: "H2", name: "River Boulevard", y: 560, isHorizontal: true, intersections: ["INT_4", "INT_5", "INT_6"] },
+            V1: { id: "V1", name: "West Parkway", x: 220, isHorizontal: false, intersections: ["INT_1", "INT_4"] },
+            V2: { id: "V2", name: "Central Avenue", x: 550, isHorizontal: false, intersections: ["INT_2", "INT_5"] },
+            V3: { id: "V3", name: "Financial Way", x: 880, isHorizontal: false, intersections: ["INT_3", "INT_6"] }
+        };
+
+        // Perimeter Entry Spawn Gates (Off-screen buffer: smooth entry without popping)
+        const ENTRY_GATES = [
+            { corridorId: "H1", direction: 1, x: -45, y: 220 + 16, heading: 0 },
+            { corridorId: "H1", direction: -1, x: 1145, y: 220 - 16, heading: Math.PI },
+            { corridorId: "H2", direction: 1, x: -45, y: 560 + 16, heading: 0 },
+            { corridorId: "H2", direction: -1, x: 1145, y: 560 - 16, heading: Math.PI },
+            { corridorId: "V1", direction: 1, x: 220 - 16, y: -45, heading: Math.PI / 2 },
+            { corridorId: "V1", direction: -1, x: 220 + 16, y: 845, heading: -Math.PI / 2 },
+            { corridorId: "V2", direction: 1, x: 550 - 16, y: -45, heading: Math.PI / 2 },
+            { corridorId: "V2", direction: -1, x: 550 + 16, y: 845, heading: -Math.PI / 2 },
+            { corridorId: "V3", direction: 1, x: 880 - 16, y: -45, heading: Math.PI / 2 },
+            { corridorId: "V3", direction: -1, x: 880 + 16, y: 845, heading: -Math.PI / 2 }
+        ];
+
         // Emergency Facilities
         const FACILITIES = {
             "POLICE_1": { id: "POLICE_1", type: "police", name: "Downtown Police Precinct #1", x: 650, y: 440, w: 75, h: 65, height: 42, nearest: "INT_5", label: "POLICE PRECINCT #1" },
@@ -1168,6 +1303,7 @@
         let activeDispatches = [];
         let emergencyPreemptionCorridor = [];
         let particles = []; // Smoke, embers, siren shockwaves
+        let followedVehicleId = null; // Currently tracked vehicle for Chase Cam (silky smooth camera lock)
 
         // Camera Transform State
         let camera = {
@@ -1430,6 +1566,11 @@
                 return;
             }
 
+            // User manual panning disengages vehicle lock
+            if (followedVehicleId !== null) {
+                disengageChaseCam();
+            }
+
             camera.isDragging = true;
             camera.lastX = e.clientX;
             camera.lastY = e.clientY;
@@ -1462,11 +1603,27 @@
             updateRadarHUD();
         }, { passive: false });
 
-        // Click to Select Intersection
+        // Click to Select Intersection or Lock Chase Cam onto Vehicle
         cityCanvas.addEventListener("click", (e) => {
             if (activeIncidentPlacement) return;
             const w = screenToWorld(e.offsetX, e.offsetY);
 
+            // 1. Check if user clicked on or near a vehicle (within 24px)
+            let closestVeh = null;
+            let minVehDist = 24;
+            for (const v of vehicles) {
+                const d = Math.hypot(v.x - w.x, v.y - w.y);
+                if (d < minVehDist) {
+                    minVehDist = d;
+                    closestVeh = v;
+                }
+            }
+            if (closestVeh) {
+                engageChaseCam(closestVeh.id);
+                return;
+            }
+
+            // 2. Otherwise check intersections
             for (const [id, junc] of Object.entries(INTERSECTIONS)) {
                 if (Math.hypot(w.x - junc.x, w.y - junc.y) < 65) {
                     selectedJunctionId = id;
@@ -1490,175 +1647,560 @@
         });
 
         /* =========================================================================
-           VEHICLE KINEMATICS & EMERGENCY UNITS ENGINE
+           ADVANCED 2.5D VEHICLE KINEMATICS, ROUTE-FOLLOWING & CHASE CAM ENGINE
+           - Zero teleportation: continuous trajectories across the city network
+           - Intelligent Driver Model (IDM) with comfortable car-following & braking
+           - Smooth Quadratic Bezier turn arcs at all 6 intersections
+           - Safe off-screen buffer spawning & despawning at 10 perimeter gates
+           - Camera lock Chase Cam with live telemetry HUD
            ========================================================================= */
 
         function initVehicles() {
             vehicles = [];
-            for (let i = 0; i < 95; i++) {
-                vehicles.push(createRandomVehicle());
+            const corridorIds = Object.keys(CORRIDORS);
+            const numVehicles = 95;
+
+            for (let i = 0; i < numVehicles; i++) {
+                const cId = corridorIds[i % corridorIds.length];
+                const dir = (Math.random() > 0.5) ? 1 : -1;
+                const pos = Math.random() * (CORRIDORS[cId].isHorizontal ? CITY_WIDTH : CITY_HEIGHT);
+                vehicles.push(createCorridorVehicle(cId, dir, pos));
             }
         }
 
-        function createRandomVehicle() {
-            const isHorizontal = Math.random() > 0.5;
-            const dir = Math.random() > 0.5 ? 1 : -1;
-            let x, y, vx, vy;
+        function createCorridorVehicle(corridorId, direction, customPos) {
+            const corr = CORRIDORS[corridorId];
+            let x, y, heading;
 
-            if (isHorizontal) {
-                const yCorridor = Math.random() > 0.5 ? 220 : 560;
-                y = dir === 1 ? yCorridor + 16 : yCorridor - 16;
-                x = Math.random() * CITY_WIDTH;
-                vx = dir * (1.3 + Math.random() * 0.8);
-                vy = 0;
+            if (corr.isHorizontal) {
+                // Eastbound: dir = 1, y = corr.y + 16, heading = 0
+                // Westbound: dir = -1, y = corr.y - 16, heading = Math.PI
+                y = (direction === 1) ? corr.y + 16 : corr.y - 16;
+                x = (customPos !== undefined) ? customPos : (direction === 1 ? -30 : CITY_WIDTH + 30);
+                heading = (direction === 1) ? 0 : Math.PI;
             } else {
-                const xCorridor = [220, 550, 880][Math.floor(Math.random() * 3)];
-                x = dir === 1 ? xCorridor - 16 : xCorridor + 16;
-                y = Math.random() * CITY_HEIGHT;
-                vx = 0;
-                vy = dir * (1.3 + Math.random() * 0.8);
+                // Southbound: dir = 1, x = corr.x - 16, heading = Math.PI/2
+                // Northbound: dir = -1, x = corr.x + 16, heading = -Math.PI/2
+                x = (direction === 1) ? corr.x - 16 : corr.x + 16;
+                y = (customPos !== undefined) ? customPos : (direction === 1 ? -30 : CITY_HEIGHT + 30);
+                heading = (direction === 1) ? Math.PI / 2 : -Math.PI / 2;
             }
 
-            const isBus = Math.random() > 0.88;
-            const isVan = !isBus && Math.random() > 0.82;
+            const rand = Math.random();
+            const type = rand < 0.45 ? "sedan" : (rand < 0.70 ? "suv" : (rand < 0.85 ? "van" : "bus"));
+            const isBus = (type === "bus");
+            const isVan = (type === "van");
+            const isSuv = (type === "suv");
 
-            return {
+            const length = isBus ? 30 : (isVan ? 22 : (isSuv ? 18 : 15.5));
+            const width = isBus ? 10 : (isVan ? 9.5 : (isSuv ? 9 : 8));
+            const height = isBus ? 8.5 : (isVan ? 7.5 : (isSuv ? 6.5 : 5.5));
+            const targetSpeed = 1.6 + Math.random() * 0.9;
+
+            const v = {
                 id: Math.floor(Math.random() * 90000) + 10000,
                 x: x,
                 y: y,
-                vx: vx,
-                vy: vy,
-                targetSpeed: Math.hypot(vx, vy),
+                heading: heading,
+                targetHeading: heading,
+                speed: targetSpeed,
+                targetSpeed: targetSpeed,
+                accel: 0,
+                vx: Math.cos(heading) * targetSpeed,
+                vy: Math.sin(heading) * targetSpeed,
+                corridorId: corridorId,
+                direction: direction,
+                streetName: corr.name,
                 color: VEHICLE_COLORS[Math.floor(Math.random() * VEHICLE_COLORS.length)],
-                type: isBus ? "bus" : (isVan ? "van" : "car"),
-                length: isBus ? 28 : (isVan ? 20 : 15),
-                width: isBus ? 9.5 : (isVan ? 9 : 8),
-                height: isBus ? 8 : (isVan ? 7 : 5.5),
+                type: type,
+                length: length,
+                width: width,
+                height: height,
+                state: "CRUISING",
                 isBraking: false,
                 isEmergency: false,
-                emergencyType: null, // "police" | "ambulance"
+                emergencyType: null,
                 route: null,
-                routeIndex: 0
+                routeIndex: 0,
+                nextIntersection: null,
+                nextManeuver: "proceed",
+                turnCurve: null,
+                turnProgress: 0,
+                turnPlanned: false,
+                tripDistance: 0,
+                tripDuration: 0
+            };
+
+            findNextIntersection(v);
+            return v;
+        }
+
+        function findNextIntersection(v) {
+            const corr = CORRIDORS[v.corridorId];
+            if (!corr) return null;
+
+            let closestId = null;
+            let minDistance = 99999;
+
+            for (const juncId of corr.intersections) {
+                const junc = INTERSECTIONS[juncId];
+                if (!junc) continue;
+
+                let distAlongCorridor;
+                if (corr.isHorizontal) {
+                    distAlongCorridor = (junc.x - v.x) * v.direction;
+                } else {
+                    distAlongCorridor = (junc.y - v.y) * v.direction;
+                }
+
+                if (distAlongCorridor > 12 && distAlongCorridor < minDistance) {
+                    minDistance = distAlongCorridor;
+                    closestId = juncId;
+                }
+            }
+
+            v.nextIntersection = closestId;
+            return closestId;
+        }
+
+        function planIntersectionManeuver(v) {
+            if (!v.nextIntersection) return "straight";
+            const junc = INTERSECTIONS[v.nextIntersection];
+            if (!junc) return "straight";
+
+            const corr = CORRIDORS[v.corridorId];
+            const validOptions = ["straight"];
+
+            if (corr.isHorizontal) {
+                if (v.direction === 1) { // Eastbound
+                    if (junc.neighbors.South) validOptions.push("turn_right");
+                    if (junc.neighbors.North) validOptions.push("turn_left");
+                } else { // Westbound
+                    if (junc.neighbors.North) validOptions.push("turn_right");
+                    if (junc.neighbors.South) validOptions.push("turn_left");
+                }
+            } else {
+                if (v.direction === 1) { // Southbound
+                    if (junc.neighbors.West) validOptions.push("turn_right");
+                    if (junc.neighbors.East) validOptions.push("turn_left");
+                } else { // Northbound
+                    if (junc.neighbors.East) validOptions.push("turn_right");
+                    if (junc.neighbors.West) validOptions.push("turn_left");
+                }
+            }
+
+            // If followed by camera, prioritize staying within network
+            if (v.id === followedVehicleId && validOptions.length > 1) {
+                const pick = validOptions[Math.floor(Math.random() * validOptions.length)];
+                v.nextManeuver = pick;
+                return pick;
+            }
+
+            const r = Math.random();
+            if (r < 0.60 || validOptions.length === 1) {
+                v.nextManeuver = "straight";
+            } else if (r < 0.80 && validOptions.includes("turn_right")) {
+                v.nextManeuver = "turn_right";
+            } else if (validOptions.includes("turn_left")) {
+                v.nextManeuver = "turn_left";
+            } else {
+                v.nextManeuver = validOptions[0];
+            }
+            return v.nextManeuver;
+        }
+
+        function buildTurnCurve(v, juncId, maneuver) {
+            const junc = INTERSECTIONS[juncId];
+            const corr = CORRIDORS[v.corridorId];
+            if (!junc || !corr) return null;
+
+            let p0, p1, p2, nextCorridorId, nextDirection, nextHeading;
+            const cx = junc.x;
+            const cy = junc.y;
+
+            if (corr.isHorizontal) {
+                const vCorridorId = (cx === 220) ? "V1" : (cx === 550 ? "V2" : "V3");
+
+                if (v.direction === 1) { // Eastbound approaching from West
+                    if (maneuver === "turn_right") { // Turns South
+                        p0 = { x: cx - 28, y: cy + 16 };
+                        p1 = { x: cx - 16, y: cy + 16 };
+                        p2 = { x: cx - 16, y: cy + 28 };
+                        nextCorridorId = vCorridorId;
+                        nextDirection = 1;
+                        nextHeading = Math.PI / 2;
+                    } else if (maneuver === "turn_left") { // Turns North
+                        p0 = { x: cx - 14, y: cy + 16 };
+                        p1 = { x: cx + 16, y: cy + 16 };
+                        p2 = { x: cx + 16, y: cy - 28 };
+                        nextCorridorId = vCorridorId;
+                        nextDirection = -1;
+                        nextHeading = -Math.PI / 2;
+                    }
+                } else { // Westbound approaching from East
+                    if (maneuver === "turn_right") { // Turns North
+                        p0 = { x: cx + 28, y: cy - 16 };
+                        p1 = { x: cx + 16, y: cy - 16 };
+                        p2 = { x: cx + 16, y: cy - 28 };
+                        nextCorridorId = vCorridorId;
+                        nextDirection = -1;
+                        nextHeading = -Math.PI / 2;
+                    } else if (maneuver === "turn_left") { // Turns South
+                        p0 = { x: cx + 14, y: cy - 16 };
+                        p1 = { x: cx - 16, y: cy - 16 };
+                        p2 = { x: cx - 16, y: cy + 28 };
+                        nextCorridorId = vCorridorId;
+                        nextDirection = 1;
+                        nextHeading = Math.PI / 2;
+                    }
+                }
+            } else {
+                const hCorridorId = (cy === 220) ? "H1" : "H2";
+
+                if (v.direction === 1) { // Southbound approaching from North
+                    if (maneuver === "turn_right") { // Turns West
+                        p0 = { x: cx - 16, y: cy - 28 };
+                        p1 = { x: cx - 16, y: cy - 16 };
+                        p2 = { x: cx - 28, y: cy - 16 };
+                        nextCorridorId = hCorridorId;
+                        nextDirection = -1;
+                        nextHeading = Math.PI;
+                    } else if (maneuver === "turn_left") { // Turns East
+                        p0 = { x: cx - 16, y: cy - 14 };
+                        p1 = { x: cx - 16, y: cy + 16 };
+                        p2 = { x: cx + 28, y: cy + 16 };
+                        nextCorridorId = hCorridorId;
+                        nextDirection = 1;
+                        nextHeading = 0;
+                    }
+                } else { // Northbound approaching from South
+                    if (maneuver === "turn_right") { // Turns East
+                        p0 = { x: cx + 16, y: cy + 28 };
+                        p1 = { x: cx + 16, y: cy + 16 };
+                        p2 = { x: cx + 28, y: cy + 16 };
+                        nextCorridorId = hCorridorId;
+                        nextDirection = 1;
+                        nextHeading = 0;
+                    } else if (maneuver === "turn_left") { // Turns West
+                        p0 = { x: cx + 16, y: cy + 14 };
+                        p1 = { x: cx + 16, y: cy - 16 };
+                        p2 = { x: cx - 28, y: cy - 16 };
+                        nextCorridorId = hCorridorId;
+                        nextDirection = -1;
+                        nextHeading = Math.PI;
+                    }
+                }
+            }
+
+            if (!p0 || !p1 || !p2) return null;
+
+            const l1 = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+            const l2 = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+            return {
+                p0: p0,
+                p1: p1,
+                p2: p2,
+                pEnd: p2,
+                isCubic: false,
+                length: Math.max(16, l1 + l2),
+                nextCorridorId: nextCorridorId,
+                nextDirection: nextDirection,
+                nextHeading: nextHeading
             };
         }
 
-        function updateVehicles() {
+        function updateVehicles(dt) {
             const speedMult = simSpeed;
+            const dtNorm = (dt || (1 / 60)) * 60;
 
             for (let i = 0; i < vehicles.length; i++) {
                 const v = vehicles[i];
 
-                // Emergency vehicle routing & waypoints
+                // 1. EMERGENCY VEHICLE WAYPOINT & CORRIDOR ROUTING
                 if (v.isEmergency && v.route && v.route.length > 0) {
-                    const targetNode = INTERSECTIONS[v.route[v.routeIndex]];
-                    if (targetNode) {
-                        const dx = targetNode.x - v.x;
-                        const dy = targetNode.y - v.y;
-                        const dist = Math.hypot(dx, dy);
+                    updateEmergencyVehicleKinematics(v, dtNorm, speedMult);
+                    continue;
+                }
 
-                        if (dist < 25) {
-                            v.routeIndex++;
-                            if (v.routeIndex >= v.route.length) {
-                                // Arrived on scene
-                                v.vx = 0;
-                                v.vy = 0;
+                // 2. TURNING MANEUVER STATE EXECUTION (SMOOTH QUADRATIC & CUBIC BEZIER ARCS)
+                if (v.state === "TURNING" && v.turnCurve) {
+                    const stepProgress = (v.speed / v.turnCurve.length) * dtNorm * speedMult * 0.9;
+                    v.turnProgress += stepProgress;
+
+                    if (v.turnProgress >= 1.0) {
+                        v.turnProgress = 1.0;
+                        v.x = v.turnCurve.pEnd.x;
+                        v.y = v.turnCurve.pEnd.y;
+                        v.corridorId = v.turnCurve.nextCorridorId;
+                        v.direction = v.turnCurve.nextDirection;
+                        v.heading = v.turnCurve.nextHeading;
+                        v.streetName = CORRIDORS[v.corridorId]?.name || "Arterial";
+                        v.state = "CRUISING";
+                        v.turnCurve = null;
+                        v.nextManeuver = "proceed";
+                        findNextIntersection(v);
+                    } else {
+                        const t = v.turnProgress;
+                        const invT = 1.0 - t;
+                        const tc = v.turnCurve;
+
+                        if (tc.isCubic) {
+                            // 180° Perimeter Turnaround Loop
+                            const p0 = tc.p0, p1 = tc.p1, p2 = tc.p2, p3 = tc.p3;
+                            v.x = invT * invT * invT * p0.x + 3 * invT * invT * t * p1.x + 3 * invT * t * t * p2.x + t * t * t * p3.x;
+                            v.y = invT * invT * invT * p0.y + 3 * invT * invT * t * p1.y + 3 * invT * t * t * p2.y + t * t * t * p3.y;
+
+                            const dx = 3 * invT * invT * (p1.x - p0.x) + 6 * invT * t * (p2.x - p1.x) + 3 * t * t * (p3.x - p2.x);
+                            const dy = 3 * invT * invT * (p1.y - p0.y) + 6 * invT * t * (p2.y - p1.y) + 3 * t * t * (p3.y - p2.y);
+                            v.heading = Math.atan2(dy, dx);
+                        } else {
+                            // 90° Intersection Turn
+                            const p0 = tc.p0, p1 = tc.p1, p2 = tc.p2;
+                            v.x = invT * invT * p0.x + 2 * invT * t * p1.x + t * t * p2.x;
+                            v.y = invT * invT * p0.y + 2 * invT * t * p1.y + t * t * p2.y;
+
+                            const dx = 2 * invT * (p1.x - p0.x) + 2 * t * (p2.x - p1.x);
+                            const dy = 2 * invT * (p1.y - p0.y) + 2 * t * (p2.y - p1.y);
+                            v.heading = Math.atan2(dy, dx);
+                        }
+                    }
+
+                    v.tripDistance += v.speed * dtNorm * speedMult;
+                    v.tripDuration += (dt || (1 / 60));
+                    continue;
+                }
+
+                // 3. CRUISING STATE: IDM CAR-FOLLOWING & INTERSECTION CHECK
+                const corr = CORRIDORS[v.corridorId];
+                if (!corr) continue;
+
+                if (!v.nextIntersection) {
+                    findNextIntersection(v);
+                }
+
+                let distToJuncCenter = 9999;
+                let stopLineDist = 9999;
+                let isSignalRedOrAmber = false;
+
+                if (v.nextIntersection) {
+                    const junc = INTERSECTIONS[v.nextIntersection];
+                    const juncState = junctionStates[v.nextIntersection];
+
+                    if (corr.isHorizontal) {
+                        distToJuncCenter = (junc.x - v.x) * v.direction;
+                    } else {
+                        distToJuncCenter = (junc.y - v.y) * v.direction;
+                    }
+
+                    stopLineDist = distToJuncCenter - 38;
+
+                    if (corr.isHorizontal) {
+                        isSignalRedOrAmber = (juncState.phase === 0 || juncState.isAmber);
+                    } else {
+                        isSignalRedOrAmber = (juncState.phase === 1 || juncState.isAmber);
+                    }
+
+                    if (emergencyPreemptionCorridor.includes(v.nextIntersection)) {
+                        isSignalRedOrAmber = false;
+                    }
+
+                    // Turn initiation check: within turn approach zone and signal green
+                    if (distToJuncCenter <= 30 && distToJuncCenter >= 10 && !isSignalRedOrAmber) {
+                        if (!v.turnPlanned) {
+                            planIntersectionManeuver(v);
+                            v.turnPlanned = true;
+                        }
+
+                        if (v.nextManeuver !== "straight") {
+                            const curve = buildTurnCurve(v, v.nextIntersection, v.nextManeuver);
+                            if (curve) {
+                                v.state = "TURNING";
+                                v.turnCurve = curve;
+                                v.turnProgress = 0.0;
+                                v.turnPlanned = false;
                                 continue;
                             }
-                        } else {
-                            const angle = Math.atan2(dy, dx);
-                            v.vx = Math.cos(angle) * 3.4;
-                            v.vy = Math.sin(angle) * 3.4;
                         }
                     }
-                }
 
-                // Check upcoming intersection traffic signals
-                let shouldStop = false;
-                for (const [juncId, junc] of Object.entries(INTERSECTIONS)) {
-                    const state = junctionStates[juncId];
-                    const distToJunc = Math.hypot(junc.x - v.x, junc.y - v.y);
-
-                    if (distToJunc < 80 && distToJunc > 16) {
-                        // Check if light is red in vehicle's direction of travel
-                        if (Math.abs(v.vx) > 0.1) {
-                            // East-West traveler
-                            if (!state.isAmber && state.phase === 0 && !v.isEmergency) {
-                                shouldStop = true;
-                            } else if (state.isAmber && distToJunc > 45 && !v.isEmergency) {
-                                shouldStop = true;
-                            }
-                        } else if (Math.abs(v.vy) > 0.1) {
-                            // North-South traveler
-                            if (!state.isAmber && state.phase === 1 && !v.isEmergency) {
-                                shouldStop = true;
-                            } else if (state.isAmber && distToJunc > 45 && !v.isEmergency) {
-                                shouldStop = true;
-                            }
+                    if (distToJuncCenter < -30) {
+                        v.turnPlanned = false;
+                        findNextIntersection(v);
+                    }
+                } else {
+                    // No more intersections ahead on corridor: check perimeter turnaround
+                    let boundaryLoop = null;
+                    if (corr.isHorizontal) {
+                        if (v.direction === -1 && v.x <= 35) {
+                            boundaryLoop = {
+                                isCubic: true,
+                                p0: { x: 35, y: corr.y - 16 },
+                                p1: { x: -25, y: corr.y - 16 },
+                                p2: { x: -25, y: corr.y + 16 },
+                                p3: { x: 35, y: corr.y + 16 },
+                                pEnd: { x: 35, y: corr.y + 16 },
+                                length: 85,
+                                nextCorridorId: corr.id,
+                                nextDirection: 1,
+                                nextHeading: 0
+                            };
+                        } else if (v.direction === 1 && v.x >= CITY_WIDTH - 35) {
+                            boundaryLoop = {
+                                isCubic: true,
+                                p0: { x: CITY_WIDTH - 35, y: corr.y + 16 },
+                                p1: { x: CITY_WIDTH + 25, y: corr.y + 16 },
+                                p2: { x: CITY_WIDTH + 25, y: corr.y - 16 },
+                                p3: { x: CITY_WIDTH - 35, y: corr.y - 16 },
+                                pEnd: { x: CITY_WIDTH - 35, y: corr.y - 16 },
+                                length: 85,
+                                nextCorridorId: corr.id,
+                                nextDirection: -1,
+                                nextHeading: Math.PI
+                            };
+                        }
+                    } else {
+                        if (v.direction === -1 && v.y <= 35) {
+                            boundaryLoop = {
+                                isCubic: true,
+                                p0: { x: corr.x + 16, y: 35 },
+                                p1: { x: corr.x + 16, y: -25 },
+                                p2: { x: corr.x - 16, y: -25 },
+                                p3: { x: corr.x - 16, y: 35 },
+                                pEnd: { x: corr.x - 16, y: 35 },
+                                length: 85,
+                                nextCorridorId: corr.id,
+                                nextDirection: 1,
+                                nextHeading: Math.PI / 2
+                            };
+                        } else if (v.direction === 1 && v.y >= CITY_HEIGHT - 35) {
+                            boundaryLoop = {
+                                isCubic: true,
+                                p0: { x: corr.x - 16, y: CITY_HEIGHT - 35 },
+                                p1: { x: corr.x - 16, y: CITY_HEIGHT + 25 },
+                                p2: { x: corr.x + 16, y: CITY_HEIGHT + 25 },
+                                p3: { x: corr.x + 16, y: CITY_HEIGHT - 35 },
+                                pEnd: { x: corr.x + 16, y: CITY_HEIGHT - 35 },
+                                length: 85,
+                                nextCorridorId: corr.id,
+                                nextDirection: -1,
+                                nextHeading: -Math.PI / 2
+                            };
                         }
                     }
-                }
 
-                // Check blockage from active incidents
-                for (const inc of activeIncidents) {
-                    const distToInc = Math.hypot(inc.x - v.x, inc.y - v.y);
-                    if (distToInc < 45 && !v.isEmergency) {
-                        shouldStop = true;
+                    if (boundaryLoop && (v.id === followedVehicleId || Math.random() < 0.75)) {
+                        v.state = "TURNING";
+                        v.turnCurve = boundaryLoop;
+                        v.turnProgress = 0.0;
+                        v.nextManeuver = "perimeter_turnaround";
+                        continue;
                     }
                 }
 
-                // Check distance to car ahead
+                // Check distance to lead vehicle in the same corridor & direction
+                let minLeadDist = 9999;
+                let leadSpeed = v.targetSpeed;
+
                 for (let j = 0; j < vehicles.length; j++) {
                     if (i === j) continue;
                     const other = vehicles[j];
-                    const d = Math.hypot(other.x - v.x, other.y - v.y);
-                    if (d < 24) {
-                        const dot = (other.x - v.x) * v.vx + (other.y - v.y) * v.vy;
-                        if (dot > 0) {
-                            shouldStop = true;
-                            break;
-                        }
+                    if (other.corridorId !== v.corridorId || other.direction !== v.direction) continue;
+                    if (other.state === "TURNING") continue;
+
+                    let distAhead;
+                    if (corr.isHorizontal) {
+                        distAhead = (other.x - v.x) * v.direction;
+                    } else {
+                        distAhead = (other.y - v.y) * v.direction;
+                    }
+
+                    if (distAhead > 0 && distAhead < minLeadDist) {
+                        minLeadDist = distAhead;
+                        leadSpeed = other.speed;
                     }
                 }
 
-                if (shouldStop) {
-                    v.isBraking = true;
-                    v.vx *= 0.82;
-                    v.vy *= 0.82;
+                // Check active incident blockage ahead
+                for (const inc of activeIncidents) {
+                    const distToInc = Math.hypot(inc.x - v.x, inc.y - v.y);
+                    if (distToInc < 45) {
+                        minLeadDist = Math.min(minLeadDist, distToInc);
+                        leadSpeed = 0;
+                    }
+                }
+
+                // 4. INTELLIGENT DRIVER MODEL (IDM) ACCELERATION COMPUTATION
+                const s0 = 20;
+                const T = 0.8;
+                const aMax = 0.06;
+                const bComf = 0.09;
+
+                let desiredAccel = aMax * (1 - Math.pow(v.speed / Math.max(0.1, v.targetSpeed), 4));
+
+                if (minLeadDist < 120) {
+                    const deltaV = v.speed - leadSpeed;
+                    const sStar = s0 + Math.max(0, v.speed * T + (v.speed * deltaV) / (2 * Math.sqrt(aMax * bComf)));
+                    const carFollowingDecel = -aMax * Math.pow(sStar / Math.max(1, minLeadDist), 2);
+                    desiredAccel = Math.min(desiredAccel, carFollowingDecel);
+                }
+
+                if (isSignalRedOrAmber && stopLineDist > 0 && stopLineDist < 100) {
+                    const signalDecel = -Math.pow(v.speed, 2) / (2 * Math.max(6, stopLineDist));
+                    desiredAccel = Math.min(desiredAccel, signalDecel);
+                }
+
+                v.accel = Math.max(-0.22, Math.min(aMax, desiredAccel));
+                v.speed = Math.max(0, Math.min(v.targetSpeed * 1.15, v.speed + v.accel * dtNorm * speedMult));
+                v.isBraking = (v.accel < -0.018 || (v.speed < 0.05 && isSignalRedOrAmber && stopLineDist < 15));
+
+                // 5. POSITION INTEGRATION ALONG CORRIDOR
+                if (corr.isHorizontal) {
+                    v.x += v.direction * v.speed * dtNorm * speedMult;
+                    v.heading = (v.direction === 1) ? 0 : Math.PI;
+                    const targetY = (v.direction === 1) ? corr.y + 16 : corr.y - 16;
+                    v.y += (targetY - v.y) * 0.15;
                 } else {
-                    v.isBraking = false;
-                    const curSpeed = Math.hypot(v.vx, v.vy);
-                    if (curSpeed < v.targetSpeed && curSpeed > 0.05) {
-                        const factor = 1.05;
-                        v.vx *= factor;
-                        v.vy *= factor;
-                    }
+                    v.y += v.direction * v.speed * dtNorm * speedMult;
+                    v.heading = (v.direction === 1) ? Math.PI / 2 : -Math.PI / 2;
+                    const targetX = (v.direction === 1) ? corr.x - 16 : corr.x + 16;
+                    v.x += (targetX - v.x) * 0.15;
                 }
 
-                v.x += v.vx * speedMult;
-                v.y += v.vy * speedMult;
+                v.tripDistance += v.speed * dtNorm * speedMult;
+                v.tripDuration += (dt || (1 / 60));
 
-                // Screen boundary wrapping (non-emergency)
-                if (!v.isEmergency) {
-                    if (v.x < 10) v.x = CITY_WIDTH - 20;
-                    if (v.x > CITY_WIDTH - 10) v.x = 20;
-                    if (v.y < 10) v.y = CITY_HEIGHT - 20;
-                    if (v.y > CITY_HEIGHT - 10) v.y = 20;
+                // 6. SEAMLESS OFF-SCREEN BOUNDARY RECYCLING (NO POPPING / NO TELEPORTATION)
+                const isOffScreen = (v.x < -70 || v.x > CITY_WIDTH + 70 || v.y < -70 || v.y > CITY_HEIGHT + 70);
+
+                if (isOffScreen && v.id !== followedVehicleId) {
+                    const gate = ENTRY_GATES[Math.floor(Math.random() * ENTRY_GATES.length)];
+                    v.corridorId = gate.corridorId;
+                    v.direction = gate.direction;
+                    v.x = gate.x;
+                    v.y = gate.y;
+                    v.heading = gate.heading;
+                    v.speed = v.targetSpeed;
+                    v.streetName = CORRIDORS[v.corridorId].name;
+                    v.state = "CRUISING";
+                    v.turnCurve = null;
+                    v.turnPlanned = false;
+                    findNextIntersection(v);
                 }
+            }
 
-                // Siren shockwave pulses for emergency vehicles in transit
-                if (v.isEmergency && Math.hypot(v.vx, v.vy) > 0.5) {
-                    if (Math.random() > 0.7) {
-                        particles.push({
-                            type: "siren_pulse",
-                            x: v.x,
-                            y: v.y,
-                            radius: 12,
-                            maxRadius: 70,
-                            color: v.emergencyType === "police" ? "#38bdf8" : "#ef4444",
-                            life: 1.0,
-                            decay: 0.035
-                        });
-                    }
+            // Siren particles for emergency vehicles
+            for (const v of vehicles) {
+                if (v.isEmergency && v.speed > 0.4 && Math.random() > 0.72) {
+                    particles.push({
+                        type: "siren_pulse",
+                        x: v.x,
+                        y: v.y,
+                        radius: 12,
+                        maxRadius: 70,
+                        color: v.emergencyType === "police" ? "#38bdf8" : "#ef4444",
+                        life: 1.0,
+                        decay: 0.035
+                    });
                 }
             }
 
@@ -1692,6 +2234,110 @@
                     p.life -= p.decay;
                 }
                 if (p.life <= 0) particles.splice(i, 1);
+            }
+        }
+
+        function updateEmergencyVehicleKinematics(v, dtNorm, speedMult) {
+            if (!v.route || v.route.length === 0) return;
+
+            const targetNodeId = v.route[v.routeIndex];
+            const targetNode = INTERSECTIONS[targetNodeId];
+
+            if (targetNode) {
+                const dx = targetNode.x - v.x;
+                const dy = targetNode.y - v.y;
+                const dist = Math.hypot(dx, dy);
+
+                if (dist < 26) {
+                    v.routeIndex++;
+                    if (v.routeIndex >= v.route.length) {
+                        v.speed = 0;
+                        v.isBraking = true;
+                        return;
+                    }
+                }
+
+                const targetAngle = Math.atan2(dy, dx);
+                let diff = targetAngle - v.heading;
+                while (diff < -Math.PI) diff += Math.PI * 2;
+                while (diff > Math.PI) diff -= Math.PI * 2;
+                v.heading += diff * 0.15;
+
+                v.speed = Math.min(v.targetSpeed, v.speed + 0.1 * dtNorm);
+                v.isBraking = false;
+
+                v.x += Math.cos(v.heading) * v.speed * dtNorm * speedMult;
+                v.y += Math.sin(v.heading) * v.speed * dtNorm * speedMult;
+            }
+        }
+
+        /* =========================================================================
+           CHASE CAM ENGINE & TELEMETRY HUD
+           ========================================================================= */
+
+        function engageChaseCam(id) {
+            const v = vehicles.find(veh => veh.id === id);
+            if (!v) return;
+            followedVehicleId = id;
+            const hud = document.getElementById("vehicleChaseHud");
+            if (hud) hud.style.display = "block";
+            updateChaseHud(v);
+            logDispatchEvent("Telemetry", `Chase Cam engaged on Vehicle #${v.id} (${v.type.toUpperCase()}).`);
+        }
+
+        function disengageChaseCam() {
+            if (followedVehicleId !== null) {
+                logDispatchEvent("Telemetry", "Chase Cam disengaged. Returning to free orbit.");
+            }
+            followedVehicleId = null;
+            const hud = document.getElementById("vehicleChaseHud");
+            if (hud) hud.style.display = "none";
+        }
+
+        function toggleChaseCam() {
+            if (followedVehicleId !== null) {
+                disengageChaseCam();
+            } else if (vehicles.length > 0) {
+                const randVeh = vehicles[Math.floor(Math.random() * vehicles.length)];
+                engageChaseCam(randVeh.id);
+            }
+        }
+
+        function cycleNextVehicleToFollow() {
+            if (vehicles.length === 0) return;
+            let idx = vehicles.findIndex(v => v.id === followedVehicleId);
+            idx = (idx + 1) % vehicles.length;
+            engageChaseCam(vehicles[idx].id);
+        }
+
+        function updateChaseHud(v) {
+            const tagEl = document.getElementById("chaseVehicleTag");
+            const typeEl = document.getElementById("chaseVehicleType");
+            const speedEl = document.getElementById("chaseSpeed");
+            const actionEl = document.getElementById("chaseAction");
+            const streetEl = document.getElementById("chaseStreet");
+            const nextManEl = document.getElementById("chaseNextManeuver");
+
+            if (tagEl) tagEl.textContent = `#TRF-${v.id}`;
+            if (typeEl) {
+                typeEl.textContent = v.isEmergency ? (v.emergencyType === "police" ? "POLICE CRUISER" : "AMBULANCE") : v.type.toUpperCase();
+                typeEl.style.color = v.isEmergency ? (v.emergencyType === "police" ? "#38bdf8" : "#ef4444") : "var(--accent-cyan)";
+            }
+            if (speedEl) speedEl.innerHTML = `${(v.speed * 28).toFixed(1)} <small style="font-size:9px; color:var(--text-dim);">km/h</small>`;
+            if (actionEl) {
+                if (v.state === "TURNING") actionEl.textContent = `Turning (${(v.nextManeuver || "").replace('_', ' ')})`;
+                else if (v.isBraking) actionEl.textContent = "Braking / Queued";
+                else if (v.speed < 0.05) actionEl.textContent = "Stopped at Signal";
+                else actionEl.textContent = "Cruising";
+            }
+            if (streetEl) streetEl.textContent = v.streetName || "Corridor";
+            if (nextManEl) {
+                if (v.nextIntersection) {
+                    const jName = INTERSECTIONS[v.nextIntersection]?.name || v.nextIntersection;
+                    nextManEl.textContent = `${v.nextManeuver || "Proceed"} @ ${jName}`;
+                } else {
+                    nextManEl.textContent = "In Transit";
+                }
             }
         }
 
@@ -1852,9 +2498,11 @@
                 id: 991,
                 x: closestPolice.x,
                 y: closestPolice.y,
-                vx: 2.8,
-                vy: 0,
+                heading: 0,
+                targetHeading: 0,
+                speed: 3.2,
                 targetSpeed: 4.2,
+                accel: 0,
                 color: "#ffffff",
                 type: "police",
                 length: 18,
@@ -1864,7 +2512,9 @@
                 isEmergency: true,
                 emergencyType: "police",
                 route: pRoute,
-                routeIndex: 0
+                routeIndex: 0,
+                tripDistance: 0,
+                tripDuration: 0
             });
 
             // 2. High-Detail 2.5D Ambulance (Modular Box Body, Red Cross, Amber Flashers)
@@ -1872,9 +2522,11 @@
                 id: 992,
                 x: closestHospital.x,
                 y: closestHospital.y,
-                vx: 2.4,
-                vy: 0,
+                heading: Math.PI,
+                targetHeading: Math.PI,
+                speed: 2.8,
                 targetSpeed: 3.6,
+                accel: 0,
                 color: "#ffffff",
                 type: "ambulance",
                 length: 24,
@@ -1884,7 +2536,9 @@
                 isEmergency: true,
                 emergencyType: "ambulance",
                 route: hRoute,
-                routeIndex: 0
+                routeIndex: 0,
+                tripDistance: 0,
+                tripDuration: 0
             });
 
             activeDispatches.push({
@@ -1909,8 +2563,30 @@
             }
         }
 
+        // BFS Shortest Path Router across 6-intersection network
         function calculateRoute(startNode, endNode) {
             if (startNode === endNode) return [startNode];
+            const queue = [[startNode]];
+            const visited = new Set([startNode]);
+
+            while (queue.length > 0) {
+                const path = queue.shift();
+                const curr = path[path.length - 1];
+
+                if (curr === endNode) {
+                    return path;
+                }
+
+                const node = INTERSECTIONS[curr];
+                if (node && node.neighbors) {
+                    for (const neighborId of Object.values(node.neighbors)) {
+                        if (neighborId && !visited.has(neighborId)) {
+                            visited.add(neighborId);
+                            queue.push([...path, neighborId]);
+                        }
+                    }
+                }
+            }
             return [startNode, endNode];
         }
 
@@ -2014,18 +2690,19 @@
            ------------------------------------------------------------------------- */
         function renderRoadsAndMarkings() {
             const roadWidth = 76;
+            const pad = 80;
 
-            // Draw roads using worldToScreen quads
+            // Draw roads using worldToScreen quads (extended into buffer)
             ctx.fillStyle = isNightMode ? "#161b26" : "#475569";
 
             // Horizontal Arterials: Y = 220, Y = 560
             for (const y of [220, 560]) {
-                drawRoadQuad(0, y - roadWidth / 2, CITY_WIDTH, roadWidth, true);
+                drawRoadQuad(-pad, y - roadWidth / 2, CITY_WIDTH + pad * 2, roadWidth, true);
             }
 
             // Vertical Arterials: X = 220, X = 550, X = 880
             for (const x of [220, 550, 880]) {
-                drawRoadQuad(x - roadWidth / 2, 0, roadWidth, CITY_HEIGHT, false);
+                drawRoadQuad(x - roadWidth / 2, -pad, roadWidth, CITY_HEIGHT + pad * 2, false);
             }
 
             // Pavement Markings: Double Solid Yellow Centerlines
@@ -2034,24 +2711,24 @@
 
             // Horizontal Yellow Centerlines
             for (const y of [220, 560]) {
-                drawWorldLine(0, y - 1.5, CITY_WIDTH, y - 1.5);
-                drawWorldLine(0, y + 1.5, CITY_WIDTH, y + 1.5);
+                drawWorldLine(-pad, y - 1.5, CITY_WIDTH + pad, y - 1.5);
+                drawWorldLine(-pad, y + 1.5, CITY_WIDTH + pad, y + 1.5);
             }
 
             // Vertical Yellow Centerlines
             for (const x of [220, 550, 880]) {
-                drawWorldLine(x - 1.5, 0, x - 1.5, CITY_HEIGHT);
-                drawWorldLine(x + 1.5, 0, x + 1.5, CITY_HEIGHT);
+                drawWorldLine(x - 1.5, -pad, x - 1.5, CITY_HEIGHT + pad);
+                drawWorldLine(x + 1.5, -pad, x + 1.5, CITY_HEIGHT + pad);
             }
 
             // Dashed White Lane Dividers
             ctx.strokeStyle = "rgba(255, 255, 255, 0.75)";
             ctx.lineWidth = 1.2;
             for (const y of [220 - 18, 220 + 18, 560 - 18, 560 + 18]) {
-                drawDashedWorldLine(0, y, CITY_WIDTH, y, 10, 8);
+                drawDashedWorldLine(-pad, y, CITY_WIDTH + pad, y, 10, 8);
             }
             for (const x of [220 - 18, 220 + 18, 550 - 18, 550 + 18, 880 - 18, 880 + 18]) {
-                drawDashedWorldLine(x, 0, x, CITY_HEIGHT, 10, 8);
+                drawDashedWorldLine(x, -pad, x, CITY_HEIGHT + pad, 10, 8);
             }
 
             // Zebra Crosswalks at all 6 Intersections (4 Approaches per intersection = 24 crosswalks)
@@ -2594,12 +3271,11 @@
                 ctx.save();
                 ctx.translate(sc.x, sc.y);
 
-                // Vehicle angle
-                let angle = Math.atan2(v.vy, v.vx);
+                // Vehicle heading angle (guaranteed continuous, stable even at zero speed)
+                let angle = v.heading;
                 if (currentViewMode === "isometric") {
-                    // Project direction vector into isometric space
                     const pA = worldToScreen(v.x, v.y, 0);
-                    const pB = worldToScreen(v.x + v.vx * 10, v.y + v.vy * 10, 0);
+                    const pB = worldToScreen(v.x + Math.cos(v.heading) * 10, v.y + Math.sin(v.heading) * 10, 0);
                     angle = Math.atan2(pB.y - pA.y, pB.x - pA.x);
                 }
                 ctx.rotate(angle);
@@ -2609,11 +3285,11 @@
 
                 // Night mode headlight beams casting onto asphalt
                 if (isNightMode) {
-                    ctx.fillStyle = "rgba(255, 255, 220, 0.2)";
+                    ctx.fillStyle = "rgba(255, 255, 220, 0.22)";
                     ctx.beginPath();
                     ctx.moveTo(L / 2, -W * 0.35);
-                    ctx.lineTo(L / 2 + 38 * camera.zoom, -W * 1.5);
-                    ctx.lineTo(L / 2 + 38 * camera.zoom, W * 1.5);
+                    ctx.lineTo(L / 2 + 42 * camera.zoom, -W * 1.6);
+                    ctx.lineTo(L / 2 + 42 * camera.zoom, W * 1.6);
                     ctx.lineTo(L / 2, W * 0.35);
                     ctx.closePath();
                     ctx.fill();
@@ -2627,23 +3303,74 @@
                 else if (v.isEmergency && v.emergencyType === "ambulance") {
                     renderAmbulance(v, L, W);
                 }
-                // 3. REGULAR TRAFFIC
+                // 3. REGULAR TRAFFIC (Sedan, SUV, Van, Transit Bus)
                 else {
                     renderRegularVehicle(v, L, W);
                 }
 
-                // Brake lights when stopping
+                // Brake lights when stopping or queued
                 if (v.isBraking) {
                     ctx.fillStyle = "#ef4444";
                     ctx.shadowColor = "#ef4444";
-                    ctx.shadowBlur = 8 * camera.zoom;
+                    ctx.shadowBlur = 9 * camera.zoom;
                     ctx.fillRect(-L / 2 - 1, -W / 2 + 1, 2, 2.5 * camera.zoom);
                     ctx.fillRect(-L / 2 - 1, W / 2 - 3.5 * camera.zoom, 2, 2.5 * camera.zoom);
                     ctx.shadowBlur = 0;
                 }
 
+                // CHASE CAM LOCK RETICLE BRACKETS & BADGE
+                if (v.id === followedVehicleId) {
+                    renderChaseReticle(v, L, W);
+                }
+
                 ctx.restore();
             }
+        }
+
+        function renderChaseReticle(v, L, W) {
+            ctx.save();
+            ctx.strokeStyle = "#38bdf8";
+            ctx.lineWidth = 2;
+            ctx.shadowColor = "#38bdf8";
+            ctx.shadowBlur = 10 * camera.zoom;
+
+            const pad = 6 * camera.zoom;
+            const bL = 7 * camera.zoom;
+            const x1 = -L / 2 - pad, x2 = L / 2 + pad;
+            const y1 = -W / 2 - pad, y2 = W / 2 + pad;
+
+            // 4 Corner Brackets
+            ctx.beginPath(); ctx.moveTo(x1, y1 + bL); ctx.lineTo(x1, y1); ctx.lineTo(x1 + bL, y1); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x2 - bL, y1); ctx.lineTo(x2, y1); ctx.lineTo(x2, y1 + bL); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x1, y2 - bL); ctx.lineTo(x1, y2); ctx.lineTo(x1 + bL, y2); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x2 - bL, y2); ctx.lineTo(x2, y2); ctx.lineTo(x2, y2 - bL); ctx.stroke();
+
+            // Pulsing target ring
+            const pulseR = (18 + Math.sin(Date.now() * 0.008) * 3) * camera.zoom;
+            ctx.strokeStyle = "rgba(56, 189, 248, 0.4)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(0, 0, pulseR, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Floating callout tag above vehicle
+            ctx.fillStyle = "rgba(15, 23, 42, 0.88)";
+            ctx.strokeStyle = "#38bdf8";
+            ctx.lineWidth = 1;
+            const tagText = `#TRF-${v.id} · ${(v.speed * 28).toFixed(0)} km/h`;
+            ctx.font = `bold ${Math.round(8 * camera.zoom)}px 'SF Mono', Menlo, monospace`;
+            const tw = ctx.measureText(tagText).width;
+            ctx.beginPath();
+            ctx.roundRect(-tw / 2 - 5, -W / 2 - 20 * camera.zoom, tw + 10, 14 * camera.zoom, 4);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = "#38bdf8";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(tagText, 0, -W / 2 - 13 * camera.zoom);
+
+            ctx.restore();
         }
 
         function renderPoliceCruiser(v, L, W) {
@@ -2761,20 +3488,68 @@
 
         function renderRegularVehicle(v, L, W) {
             // Drop shadow
-            ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+            ctx.fillStyle = "rgba(0, 0, 0, 0.38)";
             ctx.beginPath();
-            ctx.roundRect(-L / 2 + 2, -W / 2 + 2, L, W, 2.5);
+            ctx.roundRect(-L / 2 + 2, -W / 2 + 2, L, W, 3);
             ctx.fill();
 
-            // Vehicle body
+            // Vehicle body chassis
             ctx.fillStyle = v.color;
             ctx.beginPath();
-            ctx.roundRect(-L / 2, -W / 2, L, W, 2.5);
+            ctx.roundRect(-L / 2, -W / 2, L, W, v.type === "bus" ? 3.5 : 2.5);
             ctx.fill();
 
-            // Windshield
-            ctx.fillStyle = isNightMode ? "#0f172a" : "#334155";
-            ctx.fillRect(L * 0.1, -W * 0.4, L * 0.25, W * 0.8);
+            // Highlight sheen along roof edge
+            ctx.fillStyle = "rgba(255, 255, 255, 0.16)";
+            ctx.fillRect(-L / 2, -W / 2 + 1, L, 1.2 * camera.zoom);
+
+            const glassCol = isNightMode ? "#0f172a" : "#334155";
+
+            if (v.type === "bus") {
+                // Multi-window Metro Transit Bus
+                ctx.fillStyle = glassCol;
+                // Front windshield
+                ctx.fillRect(L * 0.28, -W * 0.42, L * 0.18, W * 0.84);
+                // Side passenger windows
+                const winCount = 4;
+                const winW = (L * 0.58) / winCount;
+                for (let w = 0; w < winCount; w++) {
+                    ctx.fillRect(-L * 0.42 + w * winW + 1, -W * 0.46, winW - 2, 2 * camera.zoom);
+                    ctx.fillRect(-L * 0.42 + w * winW + 1, W * 0.46 - 2 * camera.zoom, winW - 2, 2 * camera.zoom);
+                }
+                // White roof AC pods
+                ctx.fillStyle = "#f1f5f9";
+                ctx.fillRect(-L * 0.2, -W * 0.25, L * 0.22, W * 0.5);
+                ctx.fillRect(L * 0.05, -W * 0.25, L * 0.18, W * 0.5);
+            } else if (v.type === "van") {
+                // Cargo delivery van with cab glass and roof ribs
+                ctx.fillStyle = glassCol;
+                ctx.fillRect(L * 0.15, -W * 0.42, L * 0.22, W * 0.84);
+                // Roof structural ribs
+                ctx.fillStyle = "rgba(0, 0, 0, 0.16)";
+                for (let r = -0.35; r <= 0.05; r += 0.13) {
+                    ctx.fillRect(L * r, -W * 0.35, 2 * camera.zoom, W * 0.7);
+                }
+            } else if (v.type === "suv") {
+                // SUV with front glass, rear quarter glass and luggage rails
+                ctx.fillStyle = glassCol;
+                ctx.fillRect(L * 0.1, -W * 0.4, L * 0.24, W * 0.8);
+                ctx.fillRect(-L * 0.3, -W * 0.4, L * 0.15, W * 0.8);
+                // Roof luggage rails
+                ctx.fillStyle = "#0f172a";
+                ctx.fillRect(-L * 0.2, -W * 0.46, L * 0.35, 1.2 * camera.zoom);
+                ctx.fillRect(-L * 0.2, W * 0.46 - 1.2 * camera.zoom, L * 0.35, 1.2 * camera.zoom);
+            } else {
+                // Sedan: sleek aerodynamic windshield and rear window
+                ctx.fillStyle = glassCol;
+                ctx.fillRect(L * 0.12, -W * 0.38, L * 0.22, W * 0.76);
+                ctx.fillRect(-L * 0.28, -W * 0.38, L * 0.16, W * 0.76);
+            }
+
+            // Headlamp lenses (front)
+            ctx.fillStyle = isNightMode ? "#fef08a" : "#ffffff";
+            ctx.fillRect(L / 2 - 1, -W / 2 + 1, 1.5, 2 * camera.zoom);
+            ctx.fillRect(L / 2 - 1, W / 2 - 3 * camera.zoom, 1.5, 2 * camera.zoom);
         }
 
         /* -------------------------------------------------------------------------
@@ -2907,6 +3682,15 @@
             for (const v of vehicles) {
                 mCtx.fillStyle = v.isEmergency ? (v.emergencyType === "police" ? "#38bdf8" : "#ef4444") : "#94a3b8";
                 mCtx.fillRect(v.x * scaleX - 1, v.y * scaleY - 1, 2, 2);
+
+                // Highlight followed vehicle on radar scope
+                if (v.id === followedVehicleId) {
+                    mCtx.strokeStyle = "#38bdf8";
+                    mCtx.lineWidth = 1.5;
+                    mCtx.beginPath();
+                    mCtx.arc(v.x * scaleX, v.y * scaleY, 5 + Math.sin(Date.now() * 0.01) * 2, 0, Math.PI * 2);
+                    mCtx.stroke();
+                }
             }
 
             // Active Incidents on Radar
@@ -3051,12 +3835,29 @@
         let lastFrameTime = performance.now();
 
         function simulationLoop(now) {
-            const dt = (now - lastFrameTime) / 1000;
+            const dt = Math.min((now - lastFrameTime) / 1000, 0.05);
             lastFrameTime = now;
 
             if (isSimRunning) {
-                updateVehicles();
+                updateVehicles(dt);
                 updateTrafficSignals();
+            }
+
+            // Silky smooth camera tracking for followed vehicle
+            if (followedVehicleId !== null) {
+                const fv = vehicles.find(v => v.id === followedVehicleId);
+                if (fv) {
+                    const sc = worldToScreen(fv.x, fv.y, 0);
+                    const targetPanX = camera.panX + (cityCanvas.width / 2 - sc.x);
+                    const targetPanY = camera.panY + (cityCanvas.height / 2 - sc.y);
+                    const lerpFactor = Math.min(1.0, 7.5 * dt);
+                    camera.panX += (targetPanX - camera.panX) * lerpFactor;
+                    camera.panY += (targetPanY - camera.panY) * lerpFactor;
+                    updateRadarHUD();
+                    updateChaseHud(fv);
+                } else {
+                    disengageChaseCam();
+                }
             }
 
             updateInspectorUI();
@@ -3073,13 +3874,14 @@
         }
 
         function stepCitySimulation() {
-            updateVehicles();
+            updateVehicles(1 / 60);
             updateTrafficSignals();
             updateInspectorUI();
             renderCityCanvas();
         }
 
         function resetCitySimulation() {
+            disengageChaseCam();
             initVehicles();
             resolveAllIncidents();
             for (const state of Object.values(junctionStates)) {
@@ -3089,6 +3891,7 @@
                 state.manualOverride = null;
             }
             updateInspectorUI();
+            logDispatchEvent("Reset", "City network state reset to nominal baseline.");
         }
 
         function updateSimSpeed(val) {
