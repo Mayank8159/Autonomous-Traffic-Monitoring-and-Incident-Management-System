@@ -1469,17 +1469,18 @@
                 id: id,
                 queues: [0, 0, 0, 0], // N, S, E, W coupled dynamically to canvas vehicles
                 signals: signals,
-                activeArm: initArm,    // 'N' | 'S' | 'E' | 'W'
+                activeArm: initArm,    // 'N' | 'S' | 'E' | 'W' | null (in Standby All-Red)
                 targetArm: initArm,
                 armWaitTimes: { N: 0, S: 0, E: 0, W: 0 },
-                armScores: { N: 0.25, S: 0.25, E: 0.25, W: 0.25 },
-                armLogits: { N: 0, S: 0, E: 0, W: 0 },
+                armScores: { N: 0, S: 0, E: 0, W: 0 },
+                armLogits: { N: -50, S: -50, E: -50, W: -50 },
                 phase: initPhase, // backward-compat axis index: 0 = NS, 1 = EW
                 targetPhase: initPhase,
-                phaseTime: 1.5 + (jNum % 4) * 1.2, // elapsed sim-seconds in current active green
+                phaseTime: 0.0, // elapsed sim-seconds in current active green
                 minGreen: 8.5 + (jNum % 4) * 0.5,  // 8.5 to 10.0 seconds minimum green holding time
                 amberDuration: 3.2, // 3.0 to 3.5s yellow transition
                 allRedDuration: 1.8, // 1.5 to 2.0s all-red clearance interval
+                isStandby: false,
                 isAmber: false,
                 amberTimer: 0,
                 isAllRed: false,
@@ -1489,7 +1490,7 @@
                 manualOverride: null, // null | "N" | "S" | "E" | "W"
                 lastModelAction: initPhase,
                 lastModelArm: initArm,
-                lastModelProbs: [0.25, 0.25, 0.25, 0.25],
+                lastModelProbs: [0, 0, 0, 0],
                 lastAxisProbs: [0.5, 0.5],
                 lastInferenceTime: 0.02
             };
@@ -1498,7 +1499,8 @@
         function enforceSingleSignalInvariant(state) {
             if (!state) return;
             if (!state.signals) state.signals = { N: "red", S: "red", E: "red", W: "red" };
-            if (state.isAllRed) {
+            if (state.isStandby || state.isAllRed) {
+                state.isAllRed = true;
                 for (const d of APPROACH_DIRS) state.signals[d] = "red";
                 return;
             }
@@ -1639,6 +1641,7 @@
         function evaluate4ArmRLPolicy(state) {
             const qs = state.queues || [0, 0, 0, 0];
             const totalQ = qs[0] + qs[1] + qs[2] + qs[3];
+            const maxQ = Math.max(qs[0] || 0, qs[1] || 0, qs[2] || 0, qs[3] || 0);
             const isNSActive = (state.activeArm === "N" || state.activeArm === "S");
             const state7d = [
                 qs[0], qs[1], qs[2], qs[3],
@@ -1649,6 +1652,21 @@
 
             // Genuine PyTorch MLP forward pass using window.RL_POLICY_WEIGHTS
             const axisOut = evaluateRLPolicy(state7d);
+
+            // If all 4 arms have zero approaching/waiting vehicles, enter/remain in Standby All-Red (0% scores)
+            if (maxQ < 0.08) {
+                return {
+                    bestArm: null,
+                    isAllEmpty: true,
+                    axisAction: axisOut.action,
+                    probs: [0, 0, 0, 0],
+                    axisProbs: axisOut.probs,
+                    armScores: { N: 0, S: 0, E: 0, W: 0 },
+                    armLogits: { N: -50, S: -50, E: -50, W: -50 },
+                    state7d: state7d
+                };
+            }
+
             const rawLogits = {};
             const waits = state.armWaitTimes || { N: 0, S: 0, E: 0, W: 0 };
 
@@ -1659,37 +1677,53 @@
                 const isArmNS = (arm === "N" || arm === "S");
                 const rlAxisProb = isArmNS ? axisOut.probs[0] : axisOut.probs[1];
 
-                // Per-arm RL prior + per-arm real queue demand + anti-starvation wait boost
-                const rlPrior = rlAxisProb * 2.5;
-                const demandTerm = qArm * 1.5;
-                const emptyPenalty = (qArm < 0.05) ? -3.5 : 0.0;
-                const starveBoost = (arm !== state.activeArm && qArm >= 0.15)
-                    ? (waitSec * 0.35 + (waitSec >= 20 ? (waitSec - 20) * 0.75 : 0))
-                    : 0.0;
-                const holdBias = (arm === state.activeArm && qArm >= 0.2 && !state.isAllRed) ? 0.5 : 0.0;
+                if (qArm < 0.08) {
+                    // Heavily penalize empty arms so they NEVER win AI selection or dilute confidence percentages
+                    rawLogits[arm] = -50.0;
+                } else {
+                    // Real queue/approaching demand + PyTorch RL axis guidance + platoon hold bias + >=25s anti-starvation
+                    const rlPrior = rlAxisProb * 0.6;
+                    const demandTerm = qArm * 2.5;
+                    const starveBoost = (arm !== state.activeArm && waitSec >= 25.0)
+                        ? ((waitSec - 25.0) * 0.8 + 4.0)
+                        : 0.0;
+                    const holdBias = (arm === state.activeArm && qArm >= 0.2 && !state.isAllRed) ? 0.5 : 0.0;
 
-                rawLogits[arm] = rlPrior + demandTerm + emptyPenalty + starveBoost + holdBias;
+                    rawLogits[arm] = rlPrior + demandTerm + starveBoost + holdBias;
+                }
             }
 
-            // 4-way softmax for independent arm confidence scores
-            const maxLogit = Math.max(rawLogits.N, rawLogits.S, rawLogits.E, rawLogits.W);
+            // 4-way softmax across non-empty arms (empty arms strictly 0.0)
+            let maxLogit = -Infinity;
+            for (let idx = 0; idx < APPROACH_DIRS.length; idx++) {
+                if ((qs[idx] || 0) >= 0.08) {
+                    maxLogit = Math.max(maxLogit, rawLogits[APPROACH_DIRS[idx]]);
+                }
+            }
             const exps = {};
             let sumExp = 0;
-            for (const arm of APPROACH_DIRS) {
-                exps[arm] = Math.exp(Math.max(-20, Math.min(20, rawLogits[arm] - maxLogit)));
-                sumExp += exps[arm];
+            for (let idx = 0; idx < APPROACH_DIRS.length; idx++) {
+                const arm = APPROACH_DIRS[idx];
+                if ((qs[idx] || 0) < 0.08) {
+                    exps[arm] = 0.0;
+                } else {
+                    exps[arm] = Math.exp(Math.max(-40, Math.min(20, rawLogits[arm] - maxLogit)));
+                    sumExp += exps[arm];
+                }
             }
             const armScores = {};
             const probs4 = [];
             for (const arm of APPROACH_DIRS) {
-                armScores[arm] = exps[arm] / (sumExp || 1);
+                armScores[arm] = sumExp > 0 ? (exps[arm] / sumExp) : 0.0;
                 probs4.push(armScores[arm]);
             }
 
-            // Deterministic argmax with wait-time tie-breaker
-            let bestArm = APPROACH_DIRS[0];
+            // Deterministic argmax across non-empty arms with wait-time tie-breaker
+            let bestArm = null;
             let bestVal = -Infinity;
-            for (const arm of APPROACH_DIRS) {
+            for (let idx = 0; idx < APPROACH_DIRS.length; idx++) {
+                const arm = APPROACH_DIRS[idx];
+                if ((qs[idx] || 0) < 0.08) continue;
                 const score = rawLogits[arm] + (waits[arm] || 0) * 0.001;
                 if (score > bestVal + 1e-6) {
                     bestVal = score;
@@ -1699,6 +1733,7 @@
 
             return {
                 bestArm: bestArm,
+                isAllEmpty: (bestArm === null),
                 axisAction: (bestArm === "N" || bestArm === "S") ? 0 : 1,
                 probs: probs4,
                 axisProbs: axisOut.probs,
@@ -2121,6 +2156,9 @@
             }
             if (typeof syncAllQueuesToVehicles === "function") {
                 syncAllQueuesToVehicles();
+            }
+            if (typeof initializeJunctionsFromDemands === "function") {
+                initializeJunctionsFromDemands();
             }
         }
 
@@ -3129,7 +3167,7 @@
                 const distToCenter = corr.isHorizontal
                     ? (junc.x - v.x) * v.direction
                     : (junc.y - v.y) * v.direction;
-                if (distToCenter <= 20 || distToCenter > 260) continue;
+                if (distToCenter <= 20 || distToCenter > 280) continue;
 
                 const arm = getVehicleApproachDir(v);
                 const armIdx = APPROACH_DIRS.indexOf(arm);
@@ -3137,7 +3175,7 @@
 
                 const weight = (v.speed < 0.25 || v.isBraking)
                     ? 1.0
-                    : Math.max(0.2, 1.0 - (distToCenter - 38) / 260);
+                    : Math.max(0.2, 1.0 - (distToCenter - 38) / 280);
                 demands[v.nextIntersection][armIdx] += weight;
             }
             return demands;
@@ -3152,6 +3190,56 @@
             }
         }
 
+        function applyPolicyTelemetry(state, policy4, inferMs) {
+            state.lastModelArm = policy4.bestArm;
+            state.lastModelAction = policy4.axisAction;
+            state.lastModelProbs = policy4.probs;
+            state.lastAxisProbs = policy4.axisProbs;
+            state.armScores = policy4.armScores;
+            state.armLogits = policy4.armLogits;
+            state.lastInferenceTime = inferMs;
+            state.lastDecision = policy4;
+        }
+
+        function initializeJunctionsFromDemands() {
+            syncAllQueuesToVehicles();
+            for (const [id, state] of Object.entries(junctionStates)) {
+                if (!state) continue;
+                state.armWaitTimes = { N: 0, S: 0, E: 0, W: 0 };
+                state.manualOverride = null;
+                state.isAmber = false;
+                state.amberTimer = 0;
+                state.allRedExtraWait = 0;
+
+                const t0 = performance.now();
+                const policy4 = evaluate4ArmRLPolicy(state);
+                const t1 = performance.now();
+                applyPolicyTelemetry(state, policy4, t1 - t0);
+
+                if (policy4.isAllEmpty || !policy4.bestArm) {
+                    state.isStandby = true;
+                    state.isAllRed = true;
+                    state.allRedTimer = 0;
+                    state.activeArm = null;
+                    state.targetArm = null;
+                    state.phase = 0;
+                    state.targetPhase = 0;
+                    state.phaseTime = 0;
+                } else {
+                    state.isStandby = false;
+                    state.isAllRed = false;
+                    state.allRedTimer = 0;
+                    state.activeArm = policy4.bestArm;
+                    state.targetArm = policy4.bestArm;
+                    state.phase = (policy4.bestArm === "N" || policy4.bestArm === "S") ? 0 : 1;
+                    state.targetPhase = state.phase;
+                    state.phaseTime = 0;
+                }
+                state.nextInferenceTimer = 0.4;
+                enforceSingleSignalInvariant(state);
+            }
+        }
+
         function isIntersectionBoxOccupied(juncId) {
             const junc = INTERSECTIONS[juncId];
             if (!junc) return false;
@@ -3160,6 +3248,25 @@
                     if (v.state === "TURNING" || v.speed > 0.05) {
                         return true;
                     }
+                }
+            }
+            return false;
+        }
+
+        function isArmClearingBox(juncId, arm) {
+            const junc = INTERSECTIONS[juncId];
+            if (!junc || !arm) return false;
+            for (const v of vehicles) {
+                if (v.isEmergency || v.state !== "CRUISING" || v.nextIntersection !== juncId) continue;
+                if (getVehicleApproachDir(v) !== arm) continue;
+                const corr = CORRIDORS[v.corridorId];
+                if (!corr) continue;
+                const distToCenter = corr.isHorizontal
+                    ? (junc.x - v.x) * v.direction
+                    : (junc.y - v.y) * v.direction;
+                // Vehicle committed past stop bar (>= -20 and < 35px) and moving
+                if (distToCenter >= -20 && distToCenter < 35 && v.speed > 0.05) {
+                    return true;
                 }
             }
             return false;
@@ -3206,61 +3313,134 @@
 
             for (const [id, state] of Object.entries(junctionStates)) {
                 if (!state.armWaitTimes) state.armWaitTimes = { N: 0, S: 0, E: 0, W: 0 };
-                if (!state.activeArm || !APPROACH_DIRS.includes(state.activeArm)) {
-                    state.activeArm = (state.phase === 1) ? "E" : "N";
-                }
-                if (!state.targetArm || !APPROACH_DIRS.includes(state.targetArm)) {
-                    state.targetArm = state.activeArm;
+                state.isStandby = Boolean(state.isStandby);
+
+                const armDemands = liveDemands[id] || [0, 0, 0, 0];
+                // Immediately surface newly approaching vehicles in state.queues so Standby/Gap-Out react on the same frame
+                for (let q = 0; q < 4; q++) {
+                    if ((armDemands[q] || 0) > (state.queues[q] || 0)) {
+                        state.queues[q] = Math.min(25.0, armDemands[q]);
+                    }
                 }
 
-                // A. Evaluate 4-Arm RL Policy on current queues before smoothing decay
-                //    so synthetic/burst demand spikes are reacted to immediately
+                // A. Evaluate forced overrides (preemption / manual override)
                 const isPreempted = emergencyPreemptionCorridor.includes(id);
                 const forcedManual = (!isPreempted && typeof state.manualOverride === "string" && APPROACH_DIRS.includes(state.manualOverride))
                     ? state.manualOverride
                     : null;
                 const desiredForcedArm = isPreempted ? getPreemptArmForJunction(id, state) : forcedManual;
 
-                // Update per-arm starve-prevention wait timers
+                // Update per-arm starve-prevention wait timers (only when non-empty and not green)
                 for (let q = 0; q < 4; q++) {
                     const arm = APPROACH_DIRS[q];
                     const qVal = state.queues[q] || 0;
-                    const isCurrentlyGreen = (!state.isAllRed && !state.isAmber && state.activeArm === arm);
-                    if (isCurrentlyGreen) {
+                    const isCurrentlyGreen = (!state.isStandby && !state.isAllRed && !state.isAmber && state.activeArm === arm);
+                    if (isCurrentlyGreen || qVal < 0.08) {
                         state.armWaitTimes[arm] = 0;
-                    } else if (qVal >= 0.2) {
-                        state.armWaitTimes[arm] = (state.armWaitTimes[arm] || 0) + simDt;
                     } else {
-                        state.armWaitTimes[arm] = Math.max(0, (state.armWaitTimes[arm] || 0) - simDt * 0.5);
+                        state.armWaitTimes[arm] = (state.armWaitTimes[arm] || 0) + simDt;
                     }
                 }
 
-                // B. State Machine Transitions (Strict single-arm invariant + amber -> all-red clearance)
-                if (state.isAllRed) {
+                // B. State Machine Transitions (Standby All-Red <-> Single-Arm Green <-> Amber -> All-Red)
+                if (state.isStandby) {
+                    state.isAllRed = true;
+                    state.isAmber = false;
+                    state.allRedTimer = 0;
+
+                    const t0 = performance.now();
+                    const policy4 = evaluate4ArmRLPolicy(state);
+                    const t1 = performance.now();
+                    applyPolicyTelemetry(state, policy4, t1 - t0);
+
+                    const wakeArm = desiredForcedArm || (!policy4.isAllEmpty ? policy4.bestArm : null);
+                    if (wakeArm && !isIntersectionBoxOccupied(id)) {
+                        // All 4 arms were already RED and box is clear -> snap straight to GREEN immediately
+                        state.isStandby = false;
+                        state.isAllRed = false;
+                        state.isAmber = false;
+                        state.activeArm = wakeArm;
+                        state.targetArm = wakeArm;
+                        state.phase = (wakeArm === "N" || wakeArm === "S") ? 0 : 1;
+                        state.targetPhase = state.phase;
+                        state.phaseTime = 0.0;
+                        state.nextInferenceTimer = 0.5;
+                    }
+                } else if (state.isAllRed) {
+                    const t0 = performance.now();
+                    const policy4 = evaluate4ArmRLPolicy(state);
+                    const t1 = performance.now();
+                    applyPolicyTelemetry(state, policy4, t1 - t0);
+
                     if (desiredForcedArm) {
                         state.targetArm = desiredForcedArm;
                         state.targetPhase = (desiredForcedArm === "N" || desiredForcedArm === "S") ? 0 : 1;
+                    } else if (!policy4.isAllEmpty && policy4.bestArm) {
+                        state.targetArm = policy4.bestArm;
+                        state.targetPhase = policy4.axisAction;
+                    } else {
+                        state.targetArm = null;
                     }
+
                     state.allRedTimer -= simDt;
                     if (state.allRedTimer <= 0) {
                         const occupied = isIntersectionBoxOccupied(id);
                         if (occupied && (state.allRedExtraWait || 0) < 3.5) {
                             state.allRedExtraWait = (state.allRedExtraWait || 0) + simDt;
                         } else {
-                            state.isAllRed = false;
                             state.allRedExtraWait = 0;
-                            state.activeArm = state.targetArm;
-                            state.phase = (state.activeArm === "N" || state.activeArm === "S") ? 0 : 1;
-                            state.targetPhase = state.phase;
-                            state.phaseTime = 0.0;
-                            state.nextInferenceTimer = 0.5;
+                            if (!desiredForcedArm && (policy4.isAllEmpty || !state.targetArm)) {
+                                // Enter Standby All-Red when all 4 arms have 0 demand
+                                state.isStandby = true;
+                                state.isAllRed = true;
+                                state.allRedTimer = 0;
+                                state.activeArm = null;
+                                state.targetArm = null;
+                                state.phaseTime = 0;
+                            } else {
+                                const nextArm = desiredForcedArm || state.targetArm || policy4.bestArm || "N";
+                                state.isStandby = false;
+                                state.isAllRed = false;
+                                state.activeArm = nextArm;
+                                state.targetArm = nextArm;
+                                state.phase = (nextArm === "N" || nextArm === "S") ? 0 : 1;
+                                state.targetPhase = state.phase;
+                                state.phaseTime = 0.0;
+                                state.nextInferenceTimer = 0.5;
+                            }
                         }
                     }
                 } else if (state.isAmber) {
+                    const t0 = performance.now();
+                    const policy4 = evaluate4ArmRLPolicy(state);
+                    const t1 = performance.now();
+                    applyPolicyTelemetry(state, policy4, t1 - t0);
+
                     if (desiredForcedArm) {
                         state.targetArm = desiredForcedArm;
                         state.targetPhase = (desiredForcedArm === "N" || desiredForcedArm === "S") ? 0 : 1;
+                    } else if (policy4.isAllEmpty) {
+                        state.targetArm = null;
+                    } else if (policy4.bestArm && policy4.bestArm !== state.activeArm) {
+                        state.targetArm = policy4.bestArm;
+                        state.targetPhase = policy4.axisAction;
+                    } else if (!state.targetArm || (state.queues[APPROACH_DIRS.indexOf(state.targetArm)] || 0) < 0.08) {
+                        let altArm = null;
+                        let altLogit = -Infinity;
+                        for (let idx = 0; idx < APPROACH_DIRS.length; idx++) {
+                            const arm = APPROACH_DIRS[idx];
+                            if (arm === state.activeArm) continue;
+                            if ((state.queues[idx] || 0) >= 0.08 && policy4.armLogits[arm] > altLogit) {
+                                altLogit = policy4.armLogits[arm];
+                                altArm = arm;
+                            }
+                        }
+                        state.targetArm = altArm;
+                        if (altArm) {
+                            state.targetPhase = (altArm === "N" || altArm === "S") ? 0 : 1;
+                        }
                     }
+
                     state.amberTimer -= simDt;
                     if (state.amberTimer <= 0) {
                         state.isAmber = false;
@@ -3270,25 +3450,23 @@
                     }
                 } else {
                     // Active single-arm green phase
+                    if (!state.activeArm || !APPROACH_DIRS.includes(state.activeArm)) {
+                        state.activeArm = (state.phase === 1) ? "E" : "N";
+                    }
                     state.phaseTime += simDt;
                     state.nextInferenceTimer -= simDt;
 
-                    if (state.nextInferenceTimer <= 0 || desiredForcedArm) {
-                        if (state.nextInferenceTimer <= 0) {
-                            state.nextInferenceTimer = 0.6;
-                            const t0 = performance.now();
-                            const policy4 = evaluate4ArmRLPolicy(state);
-                            const t1 = performance.now();
+                    const activeIdx = APPROACH_DIRS.indexOf(state.activeArm);
+                    const qActive = state.queues[activeIdx] || 0;
+                    const isActiveEmpty = (qActive < 0.08);
+                    const shouldGapOutCheck = (isActiveEmpty && state.phaseTime >= 1.0);
 
-                            state.lastModelArm = policy4.bestArm;
-                            state.lastModelAction = policy4.axisAction;
-                            state.lastModelProbs = policy4.probs;
-                            state.lastAxisProbs = policy4.axisProbs;
-                            state.armScores = policy4.armScores;
-                            state.armLogits = policy4.armLogits;
-                            state.lastInferenceTime = (t1 - t0);
-                            state.lastDecision = policy4;
-                        }
+                    if (state.nextInferenceTimer <= 0 || desiredForcedArm || shouldGapOutCheck) {
+                        state.nextInferenceTimer = 0.6;
+                        const t0 = performance.now();
+                        const policy4 = evaluate4ArmRLPolicy(state);
+                        const t1 = performance.now();
+                        applyPolicyTelemetry(state, policy4, t1 - t0);
 
                         if (desiredForcedArm) {
                             if (state.activeArm !== desiredForcedArm) {
@@ -3299,33 +3477,49 @@
                             } else {
                                 state.phaseTime = 0;
                             }
-                        } else if (state.lastModelArm) {
-                            const bestArm = state.lastModelArm;
-                            const activeIdx = APPROACH_DIRS.indexOf(state.activeArm);
+                        } else if (policy4.isAllEmpty) {
+                            if (state.phaseTime >= 1.0) {
+                                if (!isArmClearingBox(id, state.activeArm)) {
+                                    state.isAmber = true;
+                                    state.amberTimer = state.amberDuration;
+                                    state.targetArm = null;
+                                } else {
+                                    state.nextInferenceTimer = 0.08;
+                                }
+                            }
+                        } else if (policy4.bestArm && policy4.bestArm !== state.activeArm) {
+                            const bestArm = policy4.bestArm;
                             const bestIdx = APPROACH_DIRS.indexOf(bestArm);
-                            const qActive = state.queues[activeIdx] || 0;
                             const qBest = state.queues[bestIdx] || 0;
                             const wBest = state.armWaitTimes[bestArm] || 0;
 
-                            const isCritical = (qActive < 0.2 && (qBest >= 1.0 || wBest >= 10.0)) ||
-                                               (qBest >= 12.0 && qActive < 3.0);
-                            const minHold = isCritical ? 5.0 : state.minGreen;
+                            let minHold = state.minGreen;
+                            if (isActiveEmpty) {
+                                // Instant Gap-Out on empty active arm once phaseTime >= 1.0s
+                                minHold = 1.0;
+                            } else if (wBest >= 25.0 || qBest >= Math.max(4.0, qActive * 3.0)) {
+                                // Override minGreen after 5.0s for starving (>=25s) or much heavier queue
+                                minHold = 5.0;
+                            }
 
-                            if (bestArm !== state.activeArm && state.phaseTime >= minHold) {
-                                state.isAmber = true;
-                                state.amberTimer = state.amberDuration;
-                                state.targetArm = bestArm;
-                                state.targetPhase = (bestArm === "N" || bestArm === "S") ? 0 : 1;
+                            if (state.phaseTime >= minHold) {
+                                if (!isArmClearingBox(id, state.activeArm)) {
+                                    state.isAmber = true;
+                                    state.amberTimer = state.amberDuration;
+                                    state.targetArm = bestArm;
+                                    state.targetPhase = (bestArm === "N" || bestArm === "S") ? 0 : 1;
+                                } else {
+                                    state.nextInferenceTimer = 0.08;
+                                }
                             }
                         }
                     }
                 }
 
-                // C. Derive 4-Way Signals EXCLUSIVELY from (isAllRed, isAmber, activeArm)
+                // C. Derive 4-Way Signals EXCLUSIVELY from (isStandby, isAllRed, isAmber, activeArm)
                 enforceSingleSignalInvariant(state);
 
                 // D. Couple Approach Queues Dynamically to Canvas Vehicles + Smooth Discharge
-                const armDemands = liveDemands[id] || [0, 0, 0, 0];
                 for (let q = 0; q < 4; q++) {
                     const dirKey = APPROACH_DIRS[q];
                     const isGreenApproach = (state.signals[dirKey] === "green");
@@ -3336,11 +3530,19 @@
                         // Smooth discharge from high/saturated queue without abrupt snap
                         const rate = isGreenApproach ? 0.65 : 0.35;
                         state.queues[q] = Math.max(liveQ, curQ - rate * simDt);
+                    } else if (liveQ === 0 && curQ > 1.2 && !isGreenApproach) {
+                        // Preserve non-green queued demand (>= 1.2) during amber/all-red transitions
+                        state.queues[q] = Math.max(0.0, curQ - 0.15 * simDt);
+                    } else if (liveQ === 0) {
+                        // Fast decay when approach actually has 0 vehicles within 280px
+                        const alpha = Math.min(1.0, simDt * 25.0);
+                        let nextQ = curQ + (0 - curQ) * alpha;
+                        if (nextQ < 0.08) nextQ = 0.0;
+                        state.queues[q] = Math.max(0.0, nextQ);
                     } else {
                         // Track actual waiting/approaching vehicles on canvas smoothly
-                        const alpha = Math.min(1.0, simDt * (isGreenApproach ? 4.0 : 3.5));
+                        const alpha = Math.min(1.0, simDt * (isGreenApproach ? 5.0 : 4.5));
                         let nextQ = curQ + (liveQ - curQ) * alpha;
-                        if (liveQ === 0 && nextQ < 0.03) nextQ = 0.0;
                         state.queues[q] = Math.max(0.0, Math.min(25.0, nextQ));
                     }
                 }
@@ -5061,32 +5263,58 @@
             }
 
             // Real-Time 4-Arm Neural Network Inference Display
-            const activeArm = state.activeArm || "N";
-            const targetArm = state.targetArm || activeArm;
-            const scores = state.armScores || { N: 0.25, S: 0.25, E: 0.25, W: 0.25 };
+            const activeArm = state.activeArm;
+            const targetArm = state.targetArm;
+            const scores = state.armScores || { N: 0, S: 0, E: 0, W: 0 };
             const waits = state.armWaitTimes || { N: 0, S: 0, E: 0, W: 0 };
+            const totalScore = (scores.N || 0) + (scores.S || 0) + (scores.E || 0) + (scores.W || 0);
 
             let recText;
-            if (state.isAllRed) {
-                recText = `All-Red Clearance → ${APPROACH_LABELS[targetArm]} (${state.allRedTimer.toFixed(1)}s)`;
+            if (state.isStandby) {
+                recText = "STANDBY (ALL CLEAR)";
+            } else if (state.isAllRed) {
+                const targetLabel = targetArm ? APPROACH_LABELS[targetArm] : "Standby";
+                recText = `All-Red Clearance → ${targetLabel} (${state.allRedTimer.toFixed(1)}s)`;
             } else if (state.isAmber) {
-                recText = `${APPROACH_LABELS[activeArm]} Amber → ${APPROACH_LABELS[targetArm]} (${state.amberTimer.toFixed(1)}s)`;
+                const activeLabel = activeArm ? APPROACH_LABELS[activeArm] : "Active";
+                const targetLabel = targetArm ? APPROACH_LABELS[targetArm] : "Standby";
+                recText = `${activeLabel} Amber → ${targetLabel} (${state.amberTimer.toFixed(1)}s)`;
             } else {
-                const aiRec = state.lastModelArm || activeArm;
-                recText = `Active: ${APPROACH_LABELS[activeArm]} Green | AI Best: ${APPROACH_LABELS[aiRec]}`;
+                const activeLabel = APPROACH_LABELS[activeArm || "N"];
+                const aiRec = state.lastModelArm || activeArm || "N";
+                recText = `Active: ${activeLabel} Green | AI Best: ${APPROACH_LABELS[aiRec]}`;
             }
 
-            const nPct = Math.round((scores.N || 0) * 100);
-            const sPct = Math.round((scores.S || 0) * 100);
-            const ePct = Math.round((scores.E || 0) * 100);
-            const wPct = Math.max(0, 100 - nPct - sPct - ePct);
+            let pcts = { N: 0, S: 0, E: 0, W: 0 };
+            if (!state.isStandby && totalScore > 0.01) {
+                let sumPct = 0;
+                let maxArm = "N";
+                let maxVal = -1;
+                for (const arm of APPROACH_DIRS) {
+                    const s = scores[arm] || 0;
+                    pcts[arm] = s > 0 ? Math.round(s * 100) : 0;
+                    sumPct += pcts[arm];
+                    if (s > maxVal) {
+                        maxVal = s;
+                        maxArm = arm;
+                    }
+                }
+                if (sumPct !== 100 && maxVal > 0) {
+                    pcts[maxArm] = Math.max(0, pcts[maxArm] + (100 - sumPct));
+                }
+            }
+            const nPct = pcts.N, sPct = pcts.S, ePct = pcts.E, wPct = pcts.W;
 
             const aiRecEl = document.getElementById("aiRecText");
             const aiConfEl = document.getElementById("aiConfText");
             const aiLatEl = document.getElementById("aiLatencyBadge");
             const aiTensorEl = document.getElementById("aiTensorText");
             if (aiRecEl) aiRecEl.textContent = recText;
-            if (aiConfEl) aiConfEl.textContent = `Arm Scores: N ${nPct}% | S ${sPct}% | E ${ePct}% | W ${wPct}%`;
+            if (aiConfEl) {
+                aiConfEl.textContent = (state.isStandby || totalScore <= 0.01)
+                    ? "Arm Scores: N 0% | S 0% | E 0% | W 0% (Standby)"
+                    : `Arm Scores: N ${nPct}% | S ${sPct}% | E ${ePct}% | W ${wPct}%`;
+            }
 
             const barN = document.getElementById("aiBarN");
             const barS = document.getElementById("aiBarS");
@@ -5159,8 +5387,15 @@
             state.targetArm = targetArm;
             state.targetPhase = (targetArm === "N" || targetArm === "S") ? 0 : 1;
 
-            // Enforce strict amber -> all-red clearance if another arm is currently open
-            if (!state.isAllRed && !state.isAmber && state.activeArm !== targetArm) {
+            if (state.isStandby) {
+                state.isStandby = false;
+                state.isAllRed = false;
+                state.isAmber = false;
+                state.activeArm = targetArm;
+                state.phase = state.targetPhase;
+                state.phaseTime = 0;
+            } else if (!state.isAllRed && !state.isAmber && state.activeArm !== targetArm) {
+                // Enforce strict amber -> all-red clearance if another arm is currently open
                 state.isAmber = true;
                 state.amberTimer = state.amberDuration;
             }
@@ -5235,13 +5470,12 @@
 
         function resetCitySimulation() {
             disengageChaseCam();
-            initVehicles();
             resolveAllIncidents();
             for (const [id, state] of Object.entries(junctionStates)) {
                 const jNum = parseInt(id.replace("INT_", "")) || 1;
                 Object.assign(state, createInitialJunctionState(id, jNum));
             }
-            syncAllQueuesToVehicles();
+            initVehicles();
             updateInspectorUI();
             logDispatchEvent("Reset", "City network state reset to nominal baseline.");
         }
