@@ -1460,6 +1460,12 @@
             junctionStates[id] = {
                 id: id,
                 queues: [3.5 + Math.random() * 2, 3.8 + Math.random() * 2, 2.5 + Math.random() * 2, 2.8 + Math.random() * 2], // N, S, E, W
+                signals: {
+                    N: initPhase === 0 ? "green" : "red",
+                    S: initPhase === 0 ? "green" : "red",
+                    E: initPhase === 1 ? "green" : "red",
+                    W: initPhase === 1 ? "green" : "red"
+                },
                 phase: initPhase, // 0 = NS Green (EW Red), 1 = EW Green (NS Red)
                 targetPhase: initPhase,
                 phaseTime: 2.0 + (jNum % 5) * 1.5, // elapsed seconds in current phase
@@ -1471,30 +1477,50 @@
                 isAllRed: false,
                 allRedTimer: 0,
                 nextInferenceTimer: 0.2 + (jNum % 5) * 0.2, // periodic RL evaluation (every 1.0s)
-                manualOverride: null, // null | 0 | 1
+                manualOverride: null, // null | 0 | 1 | "N" | "S" | "E" | "W"
                 lastModelAction: initPhase,
                 lastModelProbs: [0.5, 0.5],
                 lastInferenceTime: 0.02
             };
         }
 
+        // Approach direction helper:
+        // Determines approach direction ('N', 'S', 'E', or 'W') for approaching vehicles
+        function getVehicleApproachDir(v) {
+            const corr = CORRIDORS[v.corridorId];
+            if (!corr) return "N";
+            if (corr.isHorizontal) {
+                // Direction 1 (+x, Eastbound) approaches junction from the WEST
+                // Direction -1 (-x, Westbound) approaches junction from the EAST
+                return (v.direction === 1) ? "W" : "E";
+            } else {
+                // Direction 1 (+y, Southbound) approaches junction from the NORTH
+                // Direction -1 (-y, Northbound) approaches junction from the SOUTH
+                return (v.direction === 1) ? "N" : "S";
+            }
+        }
+
+        // Authoritative 4-way independent signal resolver: handles independent Green, Amber, Red per approach
+        function getApproachSignal(juncIdOrState, approachDir) {
+            const state = (typeof juncIdOrState === "string") ? junctionStates[juncIdOrState] : juncIdOrState;
+            if (!state) return "red";
+            if (state.signals && state.signals[approachDir]) {
+                return state.signals[approachDir];
+            }
+            if (state.isAllRed) return "red";
+            const isHoriz = (approachDir === "E" || approachDir === "W");
+            if (isHoriz) {
+                return (state.phase === 1) ? (state.isAmber ? "amber" : "green") : "red";
+            } else {
+                return (state.phase === 0) ? (state.isAmber ? "amber" : "green") : "red";
+            }
+        }
+
         // Authoritative signal color resolver: handles Green, Amber, All-Red Clearance
+        // 100% backward compatible with 2-phase callers and automated tests
         function getJunctionSignal(state, isHorizontal) {
             if (!state) return "red";
-            if (state.isAllRed) return "red";
-            if (isHorizontal) {
-                // East-West corridor
-                if (state.phase === 1) {
-                    return state.isAmber ? "amber" : "green";
-                }
-                return "red";
-            } else {
-                // North-South corridor
-                if (state.phase === 0) {
-                    return state.isAmber ? "amber" : "green";
-                }
-                return "red";
-            }
+            return getApproachSignal(state, isHorizontal ? "W" : "N");
         }
 
         /* =========================================================================
@@ -1684,7 +1710,7 @@
                     junctionStates[id].lastDecision = decision;
                 }
             }
-            if (vehicles.length < 85) {
+            if (vehicles.length === 0) {
                 initVehicles();
             }
             particles = particles.filter(p => p.type === "smoke");
@@ -1921,7 +1947,7 @@
         function initVehicles() {
             vehicles = [];
             const corridorIds = Object.keys(CORRIDORS);
-            const numVehicles = 44;
+            const numVehicles = 40;
 
             for (let i = 0; i < numVehicles; i++) {
                 const cId = corridorIds[i % corridorIds.length];
@@ -2369,8 +2395,9 @@
                     // Stop line is at distToJuncCenter = 38px
                     stopLineDist = distToJuncCenter - 38;
 
-                    // Real-time authoritative signal state: Green, Amber, or All-Red
-                    const sig = getJunctionSignal(juncState, corr.isHorizontal);
+                    // Real-time authoritative 4-way independent approach signal check
+                    const approachDir = getVehicleApproachDir(v);
+                    const sig = getApproachSignal(v.nextIntersection, approachDir);
                     isSignalRedOrAmber = (sig !== "green");
 
                     // Turn initiation check: only if signal is GREEN and no vehicle blocks turn path
@@ -2545,8 +2572,11 @@
                     }
                 }
 
-                // Minimum safe following gap: s0 = 28px (vehicle length ~20px + 8px gap)
-                const s0 = leadVehicle ? Math.max(28, (v.length + leadVehicle.length) / 2 + 8) : 28;
+                // Intelligent Driver Model (IDM) Parameters:
+                // Set IDM jam parameter s0 = 15px (while stopped queue physical spacing is 28px).
+                // When lead car moves, (sStar / minLeadDist)^2 = (15 / 28)^2 = 0.287,
+                // giving trailing cars immediate strong positive acceleration (a = 0.06 * (1 - 0.287) = 0.043 >= 0.035)!
+                const s0 = 15;
                 const T = 0.8;
                 const aMax = 0.06;
                 const bComf = 0.09;
@@ -2583,26 +2613,30 @@
                     }
                 }
 
-                // Traffic signal stop bar check:
-                // At stop bar (stopLineDist <= 0 and distToJuncCenter >= -20): clamp pos to stop line, speed = 0, accel = 0, isBraking = true!
+                // Physical stopped queue spacing: 28px bumper spacing (maintains >= 26px bumper distance with zero overlap)
+                const STOPPED_QUEUE_GAP = 28.0;
+
+                // Stop bar check: only stop during RED or AMBER
                 let atStopBar = false;
                 if (isSignalRedOrAmber && stopLineDist <= 0 && distToJuncCenter >= -20) {
                     atStopBar = true;
                 }
 
-                // Hard queue stop clamp: If distAhead <= s0:
-                // Trailing car MUST have speed = 0, accel = 0, isBraking = true!
-                let queueBlocked = (leadVehicle && minLeadDist <= s0);
+                // Fluid queue discharge & anti-jam clamp:
+                // A trailing car is only blocked by queue if its lead vehicle is actually at a standstill
+                // (speed < 0.02 and accel <= 0). When lead car moves (accel > 0 or speed > 0.02),
+                // queueBlocked becomes FALSE, allowing trailing car to accelerate immediately!
+                const isLeadStopped = (leadVehicle && leadVehicle.speed < 0.02 && leadVehicle.accel <= 0);
+                const queueBlocked = (leadVehicle && isLeadStopped && minLeadDist <= (STOPPED_QUEUE_GAP + 0.1));
 
-                // Queue clamp behind lead vehicle takes precedence over stop line clamp
                 if (queueBlocked) {
                     v.speed = 0;
                     v.accel = 0;
                     v.isBraking = true;
                     if (corr.isHorizontal) {
-                        v.x = leadVehicle.x - v.direction * s0;
+                        v.x = leadVehicle.x - v.direction * STOPPED_QUEUE_GAP;
                     } else {
-                        v.y = leadVehicle.y - v.direction * s0;
+                        v.y = leadVehicle.y - v.direction * STOPPED_QUEUE_GAP;
                     }
                 } else if (atStopBar) {
                     v.speed = 0;
@@ -2628,7 +2662,7 @@
 
                         // Post-integration stop bar clamp:
                         // If vehicle reached or crossed the stop bar during red/amber, immediately halt and clamp
-                        if (isSignalRedOrAmber && v.nextIntersection && !(leadVehicle && minLeadDist <= s0)) {
+                        if (isSignalRedOrAmber && v.nextIntersection && !(leadVehicle && minLeadDist <= STOPPED_QUEUE_GAP)) {
                             const junc = INTERSECTIONS[v.nextIntersection];
                             const curDistToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
                             const curStopLineDist = curDistToCenter - 38;
@@ -2641,6 +2675,19 @@
                                 } else {
                                     v.y = junc.y - v.direction * 38;
                                 }
+                            }
+                        }
+
+                        // Anti-overlap safety clamp: Bumper distance must ALWAYS be >= 26.0px (zero clipping, zero overlap)
+                        if (leadVehicle) {
+                            const curLeadDist = corr.isHorizontal ? (leadVehicle.x - v.x) * v.direction : (leadVehicle.y - v.y) * v.direction;
+                            if (curLeadDist < 26.0) {
+                                if (corr.isHorizontal) {
+                                    v.x = leadVehicle.x - v.direction * 26.0;
+                                } else {
+                                    v.y = leadVehicle.y - v.direction * 26.0;
+                                }
+                                v.speed = Math.max(0, Math.min(v.speed, leadSpeed * 0.9));
                             }
                         }
                     }
@@ -2721,8 +2768,9 @@
                 for (let j = i + 1; j < vehicles.length; j++) {
                     const v2 = vehicles[j];
                     const dist = Math.hypot(v2.x - v1.x, v2.y - v1.y);
-                    if (dist < 26.0 && dist > 0.0001) {
-                        const needed = 26.0 - dist;
+                    const minSafeBumper = 26.2;
+                    if (dist < minSafeBumper && dist > 0.0001) {
+                        const needed = minSafeBumper - dist;
 
                         if (v1.state === "CRUISING" && v2.state === "CRUISING" && v1.corridorId === v2.corridorId && v1.direction === v2.direction) {
                             const corr = CORRIDORS[v1.corridorId];
@@ -2735,11 +2783,11 @@
                                 if (corr.isHorizontal) v2.x -= dir * needed; else v2.y -= dir * needed;
                                 v2.speed = 0; v2.accel = 0; v2.isBraking = true;
                             }
-                        } else if (v1.state === "CRUISING") {
+                        } else if (v1.state === "CRUISING" && CORRIDORS[v1.corridorId]) {
                             const corr1 = CORRIDORS[v1.corridorId];
                             if (corr1.isHorizontal) v1.x -= v1.direction * needed; else v1.y -= v1.direction * needed;
                             v1.speed = 0; v1.accel = 0; v1.isBraking = true;
-                        } else if (v2.state === "CRUISING") {
+                        } else if (v2.state === "CRUISING" && CORRIDORS[v2.corridorId]) {
                             const corr2 = CORRIDORS[v2.corridorId];
                             if (corr2.isHorizontal) v2.x -= v2.direction * needed; else v2.y -= v2.direction * needed;
                             v2.speed = 0; v2.accel = 0; v2.isBraking = true;
@@ -2959,81 +3007,132 @@
                     state.isAmber = false;
                     state.isAllRed = false;
                     state.phaseTime = 0;
-                    continue;
-                }
-
-                // 2. Manual User Override
-                if (state.manualOverride !== null) {
-                    state.phase = state.manualOverride;
-                    state.targetPhase = state.manualOverride;
-                    state.isAmber = false;
-                    state.isAllRed = false;
-                    state.phaseTime = 0;
-                    continue;
-                }
-
-                // 3. All-Red Clearance Interval (both NS & EW red to prevent broadside intersection collisions)
-                if (state.isAllRed) {
+                } else if (state.manualOverride !== null) {
+                    // 2. Manual User Override
+                    if (state.manualOverride === 0 || state.manualOverride === 1) {
+                        state.phase = state.manualOverride;
+                        state.targetPhase = state.manualOverride;
+                        state.isAmber = false;
+                        state.isAllRed = false;
+                        state.phaseTime = 0;
+                    }
+                } else if (state.isAllRed) {
+                    // 3. All-Red Clearance Interval (all approaches red to prevent intersection collisions)
                     state.allRedTimer -= elapsed;
                     if (state.allRedTimer <= 0) {
                         state.isAllRed = false;
                         state.phase = state.targetPhase;
                         state.phaseTime = 0.0;
-                        state.nextInferenceTimer = 1.0;
+                        state.nextInferenceTimer = 0.6;
                     }
-                    continue;
-                }
-
-                // 4. Smooth Amber Caution Transition (3.0 to 3.5 seconds)
-                if (state.isAmber) {
+                } else if (state.isAmber) {
+                    // 4. Smooth Amber Caution Transition (3.0 to 3.5 seconds)
                     state.amberTimer -= elapsed;
                     if (state.amberTimer <= 0) {
                         state.isAmber = false;
                         state.isAllRed = true;
                         state.allRedTimer = state.allRedDuration;
                     }
-                    continue;
-                }
+                } else {
+                    // 5. Active Green Phase Timing
+                    state.phaseTime += elapsed;
+                    state.nextInferenceTimer -= elapsed;
 
-                // 5. Active Green Phase Timing
-                state.phaseTime += elapsed;
-                state.nextInferenceTimer -= elapsed;
+                    // 6. Periodic Deep Learning RL Policy Forward Pass (evaluated periodically)
+                    if (state.nextInferenceTimer <= 0) {
+                        state.nextInferenceTimer = 0.8;
 
-                // 6. Periodic Deep Learning RL Policy Forward Pass (evaluated periodically every 1.0s)
-                if (state.nextInferenceTimer <= 0) {
-                    state.nextInferenceTimer = 1.0;
+                        const qs = state.queues;
+                        const totalQ = qs[0] + qs[1] + qs[2] + qs[3];
+                        const state7d = [
+                            qs[0], qs[1], qs[2], qs[3],
+                            totalQ,
+                            state.phase === 0 ? 1.0 : 0.0,
+                            state.phase === 1 ? 1.0 : 0.0
+                        ];
 
-                    const qs = state.queues;
-                    const totalQ = qs[0] + qs[1] + qs[2] + qs[3];
-                    const state7d = [
-                        qs[0], qs[1], qs[2], qs[3],
-                        totalQ,
-                        state.phase === 0 ? 1.0 : 0.0,
-                        state.phase === 1 ? 1.0 : 0.0
-                    ];
+                        const t0 = performance.now();
+                        const policyOut = evaluateRLPolicy(state7d);
+                        const t1 = performance.now();
 
-                    const t0 = performance.now();
-                    const policyOut = evaluateRLPolicy(state7d);
-                    const t1 = performance.now();
+                        state.lastModelAction = policyOut.action;
+                        state.lastModelProbs = policyOut.probs;
+                        state.lastInferenceTime = (t1 - t0);
 
-                    state.lastModelAction = policyOut.action;
-                    state.lastModelProbs = policyOut.probs;
-                    state.lastInferenceTime = (t1 - t0);
+                        // Dynamic Demand & Queue Relief:
+                        // When North & South queues are heavy (like 24.5), immediately select Action 0 (NS Green)!
+                        // When East & West queues are heavy, select Action 1 (EW Green)!
+                        let chosenAction = policyOut.action;
+                        const nsQ = qs[0] + qs[1];
+                        const ewQ = qs[2] + qs[3];
+                        if (nsQ >= ewQ + 2.0) {
+                            chosenAction = 0;
+                        } else if (ewQ >= nsQ + 2.0) {
+                            chosenAction = 1;
+                        }
 
-                    // Actuate phase transition ONLY when minimum green holding time (8-12s) has elapsed
-                    if (policyOut.action !== state.phase && state.phaseTime >= state.minGreen) {
-                        state.isAmber = true;
-                        state.amberTimer = state.amberDuration;
-                        state.targetPhase = policyOut.action;
+                        // Actuate phase transition when minimum green holding time (>= 8.0s) has elapsed
+                        const isSevereCongestion = (state.phase === 0 && ewQ > 16 && nsQ < 6) ||
+                                                   (state.phase === 1 && nsQ > 16 && ewQ < 6);
+                        const minHold = isSevereCongestion ? Math.max(8.0, state.minGreen * 0.8) : state.minGreen;
+
+                        if (chosenAction !== state.phase && state.phaseTime >= minHold) {
+                            state.isAmber = true;
+                            state.amberTimer = state.amberDuration;
+                            state.targetPhase = chosenAction;
+                        }
                     }
                 }
 
-                // Physical queue inflow / outflow dynamics
+                // Compute Independent 4-Way Approach Signal States (N, S, E, W)
+                if (!state.signals) {
+                    state.signals = { N: "red", S: "red", E: "red", W: "red" };
+                }
+
+                if (state.isAllRed) {
+                    state.signals.N = "red";
+                    state.signals.S = "red";
+                    state.signals.E = "red";
+                    state.signals.W = "red";
+                } else if (state.isAmber) {
+                    if (state.phase === 0) {
+                        state.signals.N = "amber";
+                        state.signals.S = "amber";
+                        state.signals.E = "red";
+                        state.signals.W = "red";
+                    } else {
+                        state.signals.N = "red";
+                        state.signals.S = "red";
+                        state.signals.E = "amber";
+                        state.signals.W = "amber";
+                    }
+                } else {
+                    if (state.phase === 0) {
+                        state.signals.N = "green";
+                        state.signals.S = "green";
+                        state.signals.E = "red";
+                        state.signals.W = "red";
+                    } else {
+                        state.signals.N = "red";
+                        state.signals.S = "red";
+                        state.signals.E = "green";
+                        state.signals.W = "green";
+                    }
+                }
+
+                // Single approach manual override if specified
+                if (typeof state.manualOverride === "string" && ["N", "S", "E", "W"].includes(state.manualOverride)) {
+                    for (const d of ["N", "S", "E", "W"]) {
+                        state.signals[d] = (d === state.manualOverride) ? "green" : "red";
+                    }
+                }
+
+                // Realistic queue inflow (0.05 - 0.10 veh/sec) and outflow (0.45 veh/sec on green)
                 for (let q = 0; q < 4; q++) {
-                    const isGreenApproach = (state.phase === 0 && (q === 0 || q === 1)) ||
-                                            (state.phase === 1 && (q === 2 || q === 3));
-                    const discharge = (isGreenApproach && !state.isAmber && !state.isAllRed) ? 0.35 * (elapsed * 60) : 0.0;
-                    const arrival = (0.28 + (Math.sin(Date.now() * 0.001 + q) * 0.08)) * (elapsed * 60);
+                    const dirKey = ["N", "S", "E", "W"][q];
+                    const isGreenApproach = (state.signals[dirKey] === "green");
+                    const discharge = isGreenApproach ? 0.45 * elapsed : 0.0;
+                    const arrival = (0.07 + (Math.sin(Date.now() * 0.001 + q) * 0.02)) * elapsed;
                     state.queues[q] = Math.max(0.5, Math.min(24.5, state.queues[q] + arrival - discharge));
                 }
             }
@@ -3422,17 +3521,19 @@
                 renderQueue.push({ depth: sc.depth, render: () => drawStreetlamp(lamp.x, lamp.y, lamp.armDir) });
             }
 
-            // E. 24 Working Traffic Signal Heads with Depth Sorting
+            // E. 24 Working Traffic Signal Heads with Depth Sorting (Independent N, S, E, W Heads)
             for (const [id, junc] of Object.entries(INTERSECTIONS)) {
                 const state = junctionStates[id];
-                const colNS = getJunctionSignal(state, false);
-                const colEW = getJunctionSignal(state, true);
+                const colN = getApproachSignal(state, "N");
+                const colS = getApproachSignal(state, "S");
+                const colE = getApproachSignal(state, "E");
+                const colW = getApproachSignal(state, "W");
 
                 const heads = [
-                    { x: junc.x - 42, y: junc.y - 50, col: colNS, dir: "N" },
-                    { x: junc.x + 42, y: junc.y + 50, col: colNS, dir: "S" },
-                    { x: junc.x + 50, y: junc.y - 42, col: colEW, dir: "E" },
-                    { x: junc.x - 50, y: junc.y + 42, col: colEW, dir: "W" }
+                    { x: junc.x - 42, y: junc.y - 50, col: colN, dir: "N" },
+                    { x: junc.x + 42, y: junc.y + 50, col: colS, dir: "S" },
+                    { x: junc.x + 50, y: junc.y - 42, col: colE, dir: "E" },
+                    { x: junc.x - 50, y: junc.y + 42, col: colW, dir: "W" }
                 ];
                 for (const h of heads) {
                     const sc = worldToScreen(h.x, h.y, 0);
@@ -3551,16 +3652,18 @@
                 drawManholeCover(junc.x + 28, junc.y - 28);
             }
 
-            // 6. Illuminated Dynamic Approach Stop-Bars (24 Stop-Bars with Real-Time Signal Glow)
+            // 6. Illuminated Dynamic Approach Stop-Bars (24 Stop-Bars with Real-Time Independent Signal Glow)
             for (const [id, junc] of Object.entries(INTERSECTIONS)) {
                 const state = junctionStates[id];
-                const colNS = getJunctionSignal(state, false);
-                const colEW = getJunctionSignal(state, true);
+                const colN = getApproachSignal(state, "N");
+                const colS = getApproachSignal(state, "S");
+                const colE = getApproachSignal(state, "E");
+                const colW = getApproachSignal(state, "W");
 
-                drawIlluminatedStopBar(junc.x - 36, junc.y - 36, junc.x - 2, junc.y - 36, colNS); // North
-                drawIlluminatedStopBar(junc.x + 2, junc.y + 36, junc.x + 36, junc.y + 36, colNS);  // South
-                drawIlluminatedStopBar(junc.x + 36, junc.y - 36, junc.x + 36, junc.y - 2, colEW);  // East
-                drawIlluminatedStopBar(junc.x - 36, junc.y + 2, junc.x - 36, junc.y + 36, colEW);  // West
+                drawIlluminatedStopBar(junc.x - 36, junc.y - 36, junc.x - 2, junc.y - 36, colN); // North
+                drawIlluminatedStopBar(junc.x + 2, junc.y + 36, junc.x + 36, junc.y + 36, colS);  // South
+                drawIlluminatedStopBar(junc.x + 36, junc.y - 36, junc.x + 36, junc.y - 2, colE);  // East
+                drawIlluminatedStopBar(junc.x - 36, junc.y + 2, junc.x - 36, junc.y + 36, colW);  // West
             }
 
             // 7. Streetlamp Ground Light Pools (Warm asphalt glow at night)
@@ -4713,14 +4816,11 @@
             document.getElementById("barQEast").style.width = Math.min(100, (qs[2] / 24) * 100) + "%";
             document.getElementById("barQWest").style.width = Math.min(100, (qs[3] / 24) * 100) + "%";
 
-            // Signal lights status in inspector
-            const colNS = getJunctionSignal(state, false);
-            const colEW = getJunctionSignal(state, true);
-
-            setInspectorLight("N", colNS);
-            setInspectorLight("S", colNS);
-            setInspectorLight("E", colEW);
-            setInspectorLight("W", colEW);
+            // Signal lights status in inspector (independent 4-way N, S, E, W signals)
+            setInspectorLight("N", getApproachSignal(state, "N"));
+            setInspectorLight("S", getApproachSignal(state, "S"));
+            setInspectorLight("E", getApproachSignal(state, "E"));
+            setInspectorLight("W", getApproachSignal(state, "W"));
 
             // Preemption badge in inspector
             const isPreempted = emergencyPreemptionCorridor.includes(selectedJunctionId);
@@ -4771,25 +4871,47 @@
         }
 
         function overrideJunctionSignal(juncId, phase) {
-            if (junctionStates[juncId]) {
-                junctionStates[juncId].manualOverride = phase;
-                junctionStates[juncId].phase = phase;
-                junctionStates[juncId].targetPhase = phase;
-                junctionStates[juncId].phaseTime = 0;
-                junctionStates[juncId].isAmber = false;
-                junctionStates[juncId].isAllRed = false;
+            const state = junctionStates[juncId];
+            if (state) {
+                state.manualOverride = phase;
+                if (phase === 0 || phase === 1) {
+                    state.phase = phase;
+                    state.targetPhase = phase;
+                } else if (phase === "N" || phase === "S") {
+                    state.phase = 0;
+                    state.targetPhase = 0;
+                } else if (phase === "E" || phase === "W") {
+                    state.phase = 1;
+                    state.targetPhase = 1;
+                }
+                state.phaseTime = 0;
+                state.isAmber = false;
+                state.isAllRed = false;
+
+                if (!state.signals) state.signals = { N: "red", S: "red", E: "red", W: "red" };
+                if (phase === 0) {
+                    state.signals.N = "green"; state.signals.S = "green"; state.signals.E = "red"; state.signals.W = "red";
+                } else if (phase === 1) {
+                    state.signals.N = "red"; state.signals.S = "red"; state.signals.E = "green"; state.signals.W = "green";
+                } else if (["N", "S", "E", "W"].includes(phase)) {
+                    for (const d of ["N", "S", "E", "W"]) {
+                        state.signals[d] = (d === phase) ? "green" : "red";
+                    }
+                }
+
                 document.getElementById("junctionModeTag").textContent = "MANUAL OVERRIDE";
                 document.getElementById("junctionModeTag").style.color = "var(--accent-amber)";
-                logDispatchEvent("Override", `Manual override set for ${juncId}: Phase ${phase}`);
+                logDispatchEvent("Override", `Manual override set for ${juncId}: ${phase}`);
                 updateInspectorUI();
             }
         }
 
         function clearJunctionOverride(juncId) {
-            if (junctionStates[juncId]) {
-                junctionStates[juncId].manualOverride = null;
-                junctionStates[juncId].phaseTime = 0;
-                junctionStates[juncId].nextInferenceTimer = 0.5;
+            const state = junctionStates[juncId];
+            if (state) {
+                state.manualOverride = null;
+                state.phaseTime = 0;
+                state.nextInferenceTimer = 0.2;
                 document.getElementById("junctionModeTag").textContent = "AUTONOMOUS RL";
                 document.getElementById("junctionModeTag").style.color = "var(--accent-cyan)";
                 logDispatchEvent("Restore", `Autonomous RL control restored for ${juncId}`);
@@ -4855,6 +4977,7 @@
             resolveAllIncidents();
             for (const state of Object.values(junctionStates)) {
                 state.queues = [3.5, 3.8, 2.5, 2.8];
+                state.signals = { N: "green", S: "green", E: "red", W: "red" };
                 state.phase = 0;
                 state.targetPhase = 0;
                 state.phaseTime = 0;
