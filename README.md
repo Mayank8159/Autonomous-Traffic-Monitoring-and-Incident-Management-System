@@ -27,8 +27,10 @@ The project encompasses all five core modules of the academic Deep Learning curr
 | **Module 3: Computer Vision & CNNs** | Real-world video stream ingestion, Object detection (Torchvision SSDLite/YOLO), 2×2 tiled high-resolution inference with IoU NMS, Centroid tracking, parked vs. moving motion classification, directional approach ROIs, 32×32 occupancy grid, Custom PyTorch CNN (`Conv2d`, `BatchNorm2d`, `MaxPool2d`, `ReLU`, `Linear`), 7-D adapter | [`src/vision.py`](src/vision.py), [`src/tracker.py`](src/tracker.py), [`src/cnn_custom.py`](src/cnn_custom.py), [`src/adapter.py`](src/adapter.py) | `python main.py --mode cnn-train --epochs 5`<br>`python main.py --mode video --video-path results/sample_traffic.mp4` |
 | **Module 4: Temporal Modeling** | Recurrent neural networks (LSTM & GRU), multi-step temporal queue forecasting, rate-of-change trend classification | [`src/temporal.py`](src/temporal.py) | Integrated in hybrid pipeline (`--mode hybrid`) |
 | **Module 5A: Generative Adversarial Networks** | Conditional Sequence GAN, Generator (GRU + Linear + Sigmoid scaling), Discriminator (BiGRU + Linear), multi-condition queue synthesis, physical quality gate validation | [`src/gan.py`](src/gan.py) | `python main.py --mode gan --epochs 10 --scenario rush_hour` |
-| **Module 5B: Variational Autoencoders** | Sequence $\beta$-VAE, GRU encoder-decoder, Reparameterization trick, Gaussian latent space, KL Divergence, threshold calibration, anomaly alerting | [`src/vae.py`](src/vae.py) | `python main.py --mode vae --epochs 8` |
+| **Deep Generative Models (VAE)** | Sequence $\beta$-VAE, GRU encoder-decoder, Reparameterization trick, Gaussian latent space, KL Divergence, threshold calibration, anomaly alerting | [`src/vae.py`](src/vae.py) | `python main.py --mode vae --epochs 8` |
+| **City Network & Incident Command** | 6-intersection urban network simulation, Dijkstra emergency routing, automated police & ambulance dispatch, AI green-wave preemption, and interactive 2D GIS visualizer | [`src/city_network.py`](src/city_network.py), [`web_visualizer/visualizer.html`](web_visualizer/visualizer.html) | `python main.py --mode city --max-steps 100`<br>`python server.py --port 8000` |
 | **Unified Integration** | End-to-end hybrid video-in-the-loop pipeline, non-blocking asynchronous REST server, and surveillance visualizer | [`src/hybrid.py`](src/hybrid.py), [`src/server.py`](src/server.py), [`server.py`](server.py), [`web_visualizer/visualizer.html`](web_visualizer/visualizer.html) | `python main.py --mode hybrid --max-steps 100`<br>`python main.py --mode server --port 8000` |
+
 
 ---
 
@@ -239,6 +241,7 @@ Autonomous-Traffic-Monitoring-and-Incident-Management-System/
 ├── main.py                            # Master CLI entry point
 ├── server.py                          # Standalone ATMS server launcher
 ├── src/
+│   ├── city_network.py                # 6-intersection city network & emergency dispatch engine
 │   ├── env.py                         # 4-way intersection simulation environment
 │   ├── model.py                       # MLP policy & Q-network architectures
 │   ├── trainer.py                     # Supervised, REINFORCE & DQN training loops
@@ -258,6 +261,7 @@ Autonomous-Traffic-Monitoring-and-Incident-Management-System/
 │   ├── sequence_vae.pt                # Trained Sequence VAE weights
 │   └── rl_policy.pt                   # Trained RL policy checkpoint
 ├── results/
+│   ├── city_rollout.json              # Multi-intersection city rollout telemetry
 │   ├── sample_traffic.mp4             # Synthetic surveillance test video
 │   ├── hybrid_rollout.json            # 100-step hybrid rollout telemetry
 │   ├── rl_comparison.png              # Benchmark evaluation plot
@@ -266,8 +270,10 @@ Autonomous-Traffic-Monitoring-and-Incident-Management-System/
 │   ├── prepared.mp4                   # Normalized video for fast inference
 │   └── debug/                         # Annotated debug frames (moving vs parked)
 └── web_visualizer/
-    ├── visualizer.html                # Surveillance web dashboard
+    ├── visualizer.html                # Interactive 2D City & CCTV Command Dashboard
+    ├── rollout_city.js                # Auto-injected 6-intersection city data
     └── rollout_data.js                # Auto-injected simulation & vision data
+
 ```
 
 ---

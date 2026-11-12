@@ -144,3 +144,9 @@ class TrafficEnv:
         Meant to be overridden by a concrete SUMO subclass.
         """
         raise NotImplementedError("Subclass must implement this method for SUMO mode.")
+
+
+def get_city_network_env(max_steps=500):
+    """Instantiate the 6-crossing multi-intersection city network environment."""
+    from src.city_network import CityNetworkEnv
+    return CityNetworkEnv(max_steps=max_steps)

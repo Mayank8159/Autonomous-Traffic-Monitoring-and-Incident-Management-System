@@ -1,5 +1,7 @@
 # src/evaluate.py
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
 from src.env import TrafficEnv
@@ -16,7 +18,9 @@ def run_controller(env, model, n_episodes=5, mode="mlp", rl=False):
         argmax actions (useful for baseline or pretrained policy).
     Returns a dict with average waiting time, queue reduction, throughput.
     """
+    model.eval()
     total_wait = 0.0
+
     total_queues = 0.0
     total_throughput = 0.0
     steps = 0

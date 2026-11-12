@@ -55,13 +55,25 @@ class CustomTrafficCNN(nn.Module):
         )
 
     def forward(self, x):
-        # x: (batch, channels, height, width)
+        # Allow flexible input dimensions: (B, C, H, W), (C, H, W), or (H, W)
+        if x.dim() == 2:
+            x = x.unsqueeze(0).unsqueeze(0)
+        elif x.dim() == 3:
+            if x.size(0) in (1, 3):
+                x = x.unsqueeze(0)
+            else:
+                x = x.unsqueeze(1)
+        # Adapt single-channel occupancy grids to 3 channels expected by conv1
+        if x.size(1) == 1:
+            x = x.repeat(1, 3, 1, 1)
+
         out = self.pool1(self.relu1(self.bn1(self.conv1(x))))
         out = self.pool2(self.relu2(self.bn2(self.conv2(out))))
         out = self.pool3(self.relu3(self.bn3(self.conv3(out))))
         out = self.adaptive_pool(out)
         densities = self.fc(out)
         return densities
+
 
 
 class SpatialOccupancyDataset(Dataset):

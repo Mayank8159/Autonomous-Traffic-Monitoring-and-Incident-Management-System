@@ -12,21 +12,34 @@ Provides:
 
 import os
 import sys
-import cgi
 import json
 import time
 import threading
 import traceback
 import urllib.parse
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-import cv2
 
 # Ensure project root in python path
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from src.hybrid import run_hybrid_pipeline
+from src.city_network import (
+    CityNetworkEnv,
+    INTERSECTIONS,
+    FACILITIES,
+    ROAD_SEGMENTS,
+    CITY_WIDTH,
+    CITY_HEIGHT,
+)
+
+
+# ---------------------------------------------------------------------------
+# Global City Network Environment instance
+# ---------------------------------------------------------------------------
+_city_lock = threading.Lock()
+_city_env = CityNetworkEnv()
+
 
 # ---------------------------------------------------------------------------
 # Global background-job state (protected by _job_lock)
@@ -66,10 +79,12 @@ def prepare_video(src, dst=None, max_width=960, max_duration=20, target_fps=12):
     - Writes to dst (default uploads/prepared.mp4) using mp4v codec.
     Raises RuntimeError on failure.
     """
+    import cv2
     if dst is None:
         dst = os.path.join(ROOT_DIR, "uploads", "prepared.mp4")
 
     cap = cv2.VideoCapture(src)
+
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video file: {src}")
 
@@ -134,6 +149,7 @@ def convert_avi_to_mp4(input_path, output_mp4_path=None):
     Transcodes an AVI (or non-browser-native) video to standard MP4 using OpenCV.
     Ensures HTML5 video players can display the uploaded video natively.
     """
+    import cv2
     if output_mp4_path is None:
         base, _ = os.path.splitext(input_path)
         output_mp4_path = f"{base}_web.mp4"
@@ -142,6 +158,7 @@ def convert_avi_to_mp4(input_path, output_mp4_path=None):
         return output_mp4_path
 
     cap = cv2.VideoCapture(input_path)
+
     if not cap.isOpened():
         return input_path
 
@@ -168,7 +185,9 @@ def convert_avi_to_mp4(input_path, output_mp4_path=None):
 def _run_pipeline_job(save_path, playable_path, rel_url, max_steps):
     """Background thread: prepare video then run the hybrid pipeline."""
     try:
+        from src.hybrid import run_hybrid_pipeline
         # 1. Prepare (downscale, cap duration, resample fps)
+
         with _job_lock:
             _job["state"] = "preparing"
             _job["progress"] = 5
@@ -244,14 +263,20 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
+            models_status = {
+                "custom_cnn": os.path.exists(os.path.join(ROOT_DIR, "models", "custom_cnn.pt")) and getattr(_city_env, "custom_cnn", None) is not None,
+                "sequence_gan": os.path.exists(os.path.join(ROOT_DIR, "models", "sequence_gan.pt")) and getattr(_city_env, "gan_generator", None) is not None,
+                "sequence_vae": os.path.exists(os.path.join(ROOT_DIR, "models", "sequence_vae.pt")) and getattr(_city_env, "vae_model", None) is not None,
+                "rl_policy": os.path.exists(os.path.join(ROOT_DIR, "models", "rl_policy.pt")) and getattr(_city_env, "policy_model", None) is not None,
+            }
             resp = {
                 "status": "ready",
                 "message": "ATMS Server Operational",
-                "models": {
-                    "custom_cnn": os.path.exists(os.path.join(ROOT_DIR, "models", "custom_cnn.pt")),
-                    "sequence_gan": os.path.exists(os.path.join(ROOT_DIR, "models", "sequence_gan.pt")),
-                    "sequence_vae": os.path.exists(os.path.join(ROOT_DIR, "models", "sequence_vae.pt")),
-                    "rl_policy": os.path.exists(os.path.join(ROOT_DIR, "models", "rl_policy.pt")),
+                "models": models_status,
+                "city_network": {
+                    "intersections": len(INTERSECTIONS),
+                    "active_incidents": len(_city_env.active_incidents),
+                    "step": _city_env.step_idx,
                 }
             }
             with _job_lock:
@@ -265,6 +290,54 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(resp).encode("utf-8"))
             return
 
+        # City Network Topology endpoint
+        if path == "/api/city/topology":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            topo = {
+                "width": CITY_WIDTH,
+                "height": CITY_HEIGHT,
+                "intersections": INTERSECTIONS,
+                "facilities": FACILITIES,
+                "road_segments": ROAD_SEGMENTS,
+            }
+            self.wfile.write(json.dumps(topo).encode("utf-8"))
+            return
+
+        # City Network State endpoint (Fully Thread-Safe)
+        if path == "/api/city/state":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            with _city_lock:
+                import numpy as np
+                inter_states = _city_env.get_state()
+                all_queues = [q for inter in _city_env.intersections.values() for q in inter.queues]
+                avg_queue = float(round(float(np.mean(all_queues)), 2)) if all_queues else 0.0
+                total_veh = float(round(float(sum(np.sum(inter.queues) for inter in _city_env.intersections.values())), 1))
+                in_transit_veh = float(round(float(sum(_city_env.corridor_in_transit.values())), 1))
+                vae_residuals = [inter.vae_residual for inter in _city_env.intersections.values()]
+                avg_vae = float(round(float(np.mean(vae_residuals)), 2)) if vae_residuals else 0.0
+                max_vae = float(round(float(np.max(vae_residuals)), 2)) if vae_residuals else 0.0
+
+                state_data = {
+                    "intersections": inter_states,
+                    "incidents": list(_city_env.active_incidents),
+                    "dispatches": list(_city_env.active_dispatches),
+                    "step": int(_city_env.step_idx),
+                    "preemption_active": bool(_city_env.preemption_active),
+                    "avg_queue": avg_queue,
+                    "total_vehicles": total_veh,
+                    "in_transit_vehicles": in_transit_veh,
+                    "system_total_vehicles": float(round(total_veh + in_transit_veh, 2)),
+                    "vae_residual": avg_vae,
+                    "max_vae_residual": max_vae,
+                }
+                serialized = json.dumps(state_data).encode("utf-8")
+            self.wfile.write(serialized)
+            return
+
         super().do_GET()
 
     def do_POST(self):
@@ -273,11 +346,173 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
 
         if path in ("/api/process_video", "/api/upload_and_process"):
             self.handle_process_video(parsed)
+        elif path == "/api/city/step":
+            self.handle_city_step()
+        elif path == "/api/city/incident":
+            self.handle_city_incident()
+        elif path == "/api/city/resolve_incident":
+            self.handle_city_resolve_incident()
+        elif path == "/api/city/reset":
+            self.handle_city_reset()
+        elif path == "/api/gan/generate":
+            self.handle_gan_generate()
+        elif path == "/api/vae/detect":
+            self.handle_vae_detect()
+        elif path == "/api/policy/predict":
+            self.handle_policy_predict()
         else:
             self.send_response(404)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"error": f"Unknown endpoint {path}"}).encode("utf-8"))
+
+    def _read_json_body(self):
+        length = int(self.headers.get("Content-Length", 0))
+        if length > 0:
+            raw = self.rfile.read(length)
+            try:
+                return json.loads(raw.decode("utf-8"))
+            except Exception:
+                return {}
+        return {}
+
+    def handle_city_step(self):
+        body = self._read_json_body()
+        actions = body.get("actions", None)
+        with _city_lock:
+            state, reward, done, info = _city_env.step(actions)
+            payload = json.dumps({
+                "state": state,
+                "reward": float(reward),
+                "done": bool(done),
+                "info": info
+            }).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def handle_city_incident(self):
+        body = self._read_json_body()
+        node_id = body.get("node_id", None)
+        inc_type = body.get("type", "collision")
+        x = body.get("x", None)
+        y = body.get("y", None)
+        approach = body.get("blocked_approach", None)
+        with _city_lock:
+            incident = _city_env.trigger_incident(
+                location_node=node_id, incident_type=inc_type, x=x, y=y, blocked_approach=approach
+            )
+            payload = json.dumps({"incident": incident, "status": "dispatched"}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def handle_city_resolve_incident(self):
+        body = self._read_json_body()
+        inc_id = body.get("id", None)
+        with _city_lock:
+            if inc_id:
+                _city_env.resolve_incident(inc_id)
+            else:
+                _city_env.active_incidents.clear()
+                _city_env.active_dispatches.clear()
+                _city_env.preemption_active = False
+                for inter in _city_env.intersections.values():
+                    inter.preemption = False
+            payload = json.dumps({"status": "resolved"}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def handle_city_reset(self):
+        with _city_lock:
+            state = _city_env.reset()
+            payload = json.dumps({"state": state, "status": "reset"}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def handle_gan_generate(self):
+        body = self._read_json_body()
+        scenario = body.get("scenario", "rush_hour")
+        num_samples = int(body.get("num_samples", 1))
+        with _city_lock:
+            scenarios = _city_env.generate_traffic_scenarios(scenario_type=scenario, num_samples=num_samples)
+            # Serialize numpy arrays if present
+            formatted = []
+            for sc in scenarios:
+                seq = sc.get("sequence", [])
+                if hasattr(seq, "tolist"):
+                    seq = seq.tolist()
+                formatted.append({
+                    "sequence": seq,
+                    "validated": sc.get("validated", False),
+                    "status": sc.get("status", "generated")
+                })
+            payload = json.dumps({"scenario": scenario, "results": formatted}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def handle_vae_detect(self):
+        body = self._read_json_body()
+        seq = body.get("sequence", None)
+        if not seq or len(seq) < 5:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Sequence of length >= 5 required"}).encode("utf-8"))
+            return
+
+        with _city_lock:
+            if _city_env.vae_model is not None:
+                from src.vae import detect_incident_anomaly
+                import numpy as np
+                seq_np = np.array(seq, dtype=np.float32)
+                res = detect_incident_anomaly(_city_env.vae_model, seq_np, _city_env.vae_th_warn, _city_env.vae_th_crit, device=_city_env.device)
+                payload = json.dumps(res).encode("utf-8")
+            else:
+                payload = json.dumps({"error": "Sequence VAE model not loaded"}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def handle_policy_predict(self):
+        body = self._read_json_body()
+        st = body.get("state", None)
+        if not st or len(st) != 7:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "7-dimensional state vector required"}).encode("utf-8"))
+            return
+
+        with _city_lock:
+            if _city_env.policy_model is not None:
+                import torch
+                import numpy as np
+                with torch.no_grad():
+                    inp_t = torch.tensor([st], dtype=torch.float32).to(_city_env.device)
+                    out_p = _city_env.policy_model(inp_t)
+                    probs = out_p.squeeze(0).cpu().numpy().tolist()
+                    act = int(np.argmax(probs))
+                payload = json.dumps({
+                    "action": act,
+                    "probs": [float(round(p, 6)) for p in probs]
+                }).encode("utf-8")
+            else:
+                payload = json.dumps({"error": "Policy model not loaded"}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(payload)
+
 
     def handle_process_video(self, parsed):
         """Saves uploaded video and starts background processing job."""

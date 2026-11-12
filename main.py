@@ -2,7 +2,6 @@
 import argparse
 import json
 import numpy as np
-import torch
 import sys
 import os
 import webbrowser
@@ -11,18 +10,15 @@ import subprocess
 # Ensure the src package is importable
 sys.path.insert(0, os.path.dirname(__file__))
 
-from src.env import TrafficEnv
-from src.model import MLPModel, RNNModel
-from src.trainer import reinforce_train, dqn_train, collect_trajectory
-from src.evaluate import run_controller, run_baseline, plot_comparison
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Autonomous Traffic Management System (ATMS)")
     parser.add_argument("--mode", type=str,
-                        choices=["rl", "supervised", "video", "hybrid", "gan", "vae", "cnn-train", "server"],
+                        choices=["rl", "supervised", "video", "hybrid", "gan", "vae", "cnn-train", "server", "city"],
                         default="rl",
-                        help="Run mode: rl, supervised, video, hybrid, gan, vae, cnn-train, or server")
+                        help="Run mode: rl, supervised, video, hybrid, gan, vae, cnn-train, server, or city")
+
     parser.add_argument("--port", type=int, default=8000, help="Port for ATMS web server (mode server)")
     parser.add_argument("--algo", type=str, choices=["reinforce", "dqn"], default="reinforce",
                         help="RL algorithm (only in rl mode)")
@@ -48,13 +44,20 @@ def parse_args():
 
 def make_env(i=0, sumo=False, max_steps=200):
     """Create an environment instance; for multi‑intersection we just instantiate several."""
+    from src.env import TrafficEnv
     return TrafficEnv(green_duration=5, red_duration=5, max_queue=30.0,
                       sumo=sumo, max_steps=max_steps)
 
 
 def run_rl_loop(args):
+    import torch
+    from src.model import MLPModel
+    from src.trainer import reinforce_train, dqn_train
+    from src.evaluate import run_controller, run_baseline, plot_comparison
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device {device}")
+
 
     # Create environments – one per intersection
     envs = [make_env(i, sumo=args.sumo, max_steps=args.max_steps)
@@ -159,8 +162,10 @@ def run_rl_loop(args):
     try:
         torch.save(policy.state_dict(), "models/rl_policy.pt")
         print("Trained RL policy saved to models/rl_policy.pt")
-    except Exception:
-        pass
+        from src.model import export_policy_weights_to_js
+        export_policy_weights_to_js()
+    except Exception as e:
+        print(f"Warning saving policy: {e}")
 
     # Save rollout data for the web visualizer
     with open("results/rl_rollout.json", "w") as f:
@@ -224,6 +229,52 @@ def main():
     elif args.mode == "server":
         from src.server import start_server
         start_server(port=args.port, host="0.0.0.0")
+    elif args.mode == "city":
+        from src.city_network import CityNetworkEnv
+        print("Initializing 6-Intersection City Network Simulation...")
+        env = CityNetworkEnv(max_steps=args.max_steps)
+        env.reset()
+        print(f"City Network ready: {len(env.intersections)} Intersections, {len(env.graph)} Nodes.")
+
+        # Simulate an incident at step 10 for demonstration
+        rollout_steps = []
+        for step in range(args.max_steps):
+            if step == 10:
+                print("\n[ALERT] Simulating Multi-Vehicle Collision at INT_2 (Downtown Core)...")
+                inc = env.trigger_incident("INT_2", "collision")
+                print(f"[DISPATCH] Nearest Police: {inc['dispatch']['police']['facility']} (ETA: {inc['dispatch']['police']['eta_sec']}s)")
+                print(f"[DISPATCH] Nearest EMS: {inc['dispatch']['ambulance']['facility']} (ETA: {inc['dispatch']['ambulance']['eta_sec']}s)")
+                print(f"[PREEMPTION] Green-Wave Preemption corridor: {inc['dispatch']['preemption_corridor']}")
+
+            state, reward, done, info = env.step()
+            rollout_steps.append(info)
+
+            if step % 25 == 0:
+                print(f"Step {step:03d} | Avg Queue: {info['avg_queue']} | Total Veh: {info['total_vehicles']} | VAE Residual: {info['vae_residual']} | Incidents: {info['active_incidents']}")
+
+            if done:
+                break
+
+        os.makedirs("results", exist_ok=True)
+        os.makedirs("web_visualizer", exist_ok=True)
+        with open("results/city_rollout.json", "w") as f:
+            json.dump({"total_steps": len(rollout_steps), "steps": rollout_steps}, f, indent=2)
+        with open("web_visualizer/rollout_city.js", "w") as f:
+            f.write("window.ATMS_CITY_ROLLOUT = ")
+            json.dump({"total_steps": len(rollout_steps), "steps": rollout_steps}, f)
+            f.write(";\n")
+        print(f"\nCity rollout exported to results/city_rollout.json and web_visualizer/rollout_city.js ({len(rollout_steps)} steps).")
+
+
+        if args.gui:
+            project_dir = os.path.abspath(os.path.dirname(__file__))
+            subprocess.Popen(
+                [sys.executable, "-m", "http.server", "8765", "--bind", "127.0.0.1"],
+                cwd=project_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            webbrowser.open("http://127.0.0.1:8765/web_visualizer/visualizer.html")
     elif args.mode in ["video", "hybrid"]:
         from src.hybrid import run_hybrid_pipeline
         run_hybrid_pipeline(video_path=args.video_path, max_frames=args.max_steps)

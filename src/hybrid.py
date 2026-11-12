@@ -24,7 +24,8 @@ from src.adapter import VisionToStateAdapter
 from src.vae import load_sequence_vae, detect_incident_anomaly
 from src.temporal import analyze_traffic_trends
 from src.gan import load_traffic_gan, generate_scenario
-from src.model import MLPModel, RNNModel
+from src.model import MLPModel, RNNModel, load_policy
+
 
 
 SAFETY_DISCLAIMER = (
@@ -105,14 +106,9 @@ def run_hybrid_pipeline(video_path=None, max_frames=120, rl_policy=None,
 
     # 4. Load or Initialize RL Policy
     if rl_policy is None:
-        rl_policy = MLPModel(input_dim=7, hidden_dims=[64, 32], dropout=0.0).to(device)
-        # Check if saved weights exist
-        if os.path.exists("models/rl_policy.pt"):
-            try:
-                rl_policy.load_state_dict(torch.load("models/rl_policy.pt", map_location=device))
-            except Exception:
-                pass
+        rl_policy = load_policy("models/rl_policy.pt", device=device)
     rl_policy.eval()
+
 
     # 5. Load GAN for scenario generation analytics
     gan_model = load_traffic_gan("models/sequence_gan.pt", device=device)
@@ -315,7 +311,8 @@ def run_hybrid_pipeline(video_path=None, max_frames=120, rl_policy=None,
     cap.release()
 
     # Package complete dashboard payload
-    rel_video_url = f"/uploads/{os.path.basename(video_path)}" if "uploads" in video_path.replace("\\", "/") else f"../{video_path.replace('\\', '/')}"
+    norm_video_path = video_path.replace("\\", "/")
+    rel_video_url = f"/uploads/{os.path.basename(video_path)}" if "uploads" in norm_video_path else f"../{norm_video_path}"
     dashboard_payload = {
         "disclaimer": SAFETY_DISCLAIMER,
         "video_metadata": {
