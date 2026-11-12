@@ -227,15 +227,22 @@ class IntersectionState:
         else:
             self.queues = np.array([4.0, 4.0, 4.0, 4.0], dtype=np.float32)
 
-        # Pick initial active single arm with largest initial queue (tie-break: North=0)
-        self.active_approach = int(np.argmax(self.queues))
-        self.target_approach = self.active_approach
-        self.phase = 0 if self.active_approach in (0, 1) else 1  # 0 = NS axis, 1 = EW axis
+        # Pick initial active single arm with largest initial queue (tie-break: North=0).
+        # If all 4 approaches start completely empty, start in Standby All-Red.
+        if float(np.max(self.queues)) <= 1e-6:
+            self.active_approach = 0
+            self.target_approach = None
+            self.phase = 0
+            self.is_all_red = True
+        else:
+            self.active_approach = int(np.argmax(self.queues))
+            self.target_approach = self.active_approach
+            self.phase = 0 if self.active_approach in (0, 1) else 1  # 0 = NS axis, 1 = EW axis
+            self.is_all_red = False
         self.phase_counter = 1  # Steps elapsed in current phase
         self.min_green = 3      # Minimum green duration steps before transition allowed
         self.is_yellow = False  # Yellow / Amber transition state
         self.yellow_timer = 0
-        self.is_all_red = False # All-red clearance interval before next green arm
         self.all_red_timer = 0
         self.preemption = False # Emergency vehicle green wave active
         self.preemption_target_phase = 0
@@ -243,7 +250,8 @@ class IntersectionState:
         self.last_action = self.phase
         self.probs = [0.5, 0.5]
         self.wait_timers = [0, 0, 0, 0]
-        self.arm_scores = [float(round(float(q), 4)) for q in self.queues]
+        self.arm_scores = []
+        self.compute_arm_scores(self.probs)
 
         # ML Model Outputs & Anomaly Detection Telemetry
         self.queue_history = collections.deque(maxlen=5)
@@ -273,31 +281,44 @@ class IntersectionState:
         Scores all 4 individual approaches [N, S, E, W] independently by combining
         RL policy axis probabilities [p_ns, p_ew], per-arm queue demand, and
         starvation-prevention wait timers.
+        Empty arms (q <= 1e-6) receive a strong penalty whenever any other arm
+        has queued vehicles so an empty arm can never outscore a queued arm.
         """
         p_ns = float(probs[0])
         p_ew = float(probs[1])
+        has_any_demand = any(float(q) > 1e-6 for q in self.queues)
         scores = []
         for idx in range(4):
-            axis_p = p_ns if idx in (0, 1) else p_ew
             q = float(self.queues[idx])
+            if q <= 1e-6:
+                scores.append(-50.0 if has_any_demand else 0.0)
+                continue
+            axis_p = p_ns if idx in (0, 1) else p_ew
             w = float(self.wait_timers[idx])
-            scores.append(q * (1.0 + 0.5 * axis_p) + wait_bonus * w)
+            effective_wait = wait_bonus * w * min(1.0, q)
+            scores.append(q * (1.0 + 0.5 * axis_p) + effective_wait)
         self.arm_scores = [float(round(s, 4)) for s in scores]
         return scores
 
     def _update_wait_timers(self):
-        """Increments wait timers for all RED approaches and resets active GREEN arm."""
+        """
+        Increments wait timers only for RED approaches that actually have queued
+        vehicles (> 0), and resets active GREEN or empty (q == 0) approaches to 0.
+        """
         for idx in range(4):
-            if not self.is_yellow and not self.is_all_red and idx == self.active_approach:
+            is_green = not self.is_yellow and not self.is_all_red and idx == self.active_approach
+            if is_green or float(self.queues[idx]) <= 1e-6:
                 self.wait_timers[idx] = 0
             else:
                 self.wait_timers[idx] += 1
 
-    def apply_action(self, action, target_approach=None):
+    def apply_action(self, action, target_approach=None, standby=False):
         """
         Apply signal action (0/1 axis or explicit 0..3 approach) with strict
-        single-approach mutual exclusion, latched target transitions, and
-        AMBER -> ALL-RED -> GREEN clearance.
+        single-approach mutual exclusion, latched target transitions, fast
+        gap-out when the active green arm drains while another arm has demand,
+        Standby All-Red when all arms are empty, and AMBER -> ALL-RED -> GREEN
+        clearance.
         """
         if self.preemption:
             desired_approach = int(self.preemption_target_approach) % 4
@@ -307,19 +328,32 @@ class IntersectionState:
             axis = 0 if int(action) == 0 else 1
             pair = (0, 1) if axis == 0 else (2, 3)
             # If current active arm is already on the requested axis and no specific
-            # arm was requested, keep it unless the opposite arm on the same axis
-            # has significantly higher demand/wait.
+            # arm was requested, keep it unless it is empty while the opposite arm
+            # has queued demand, or the opposite arm has significantly higher score.
             if self.active_approach in pair:
                 other = pair[1] if self.active_approach == pair[0] else pair[0]
-                if self.arm_scores[other] > self.arm_scores[self.active_approach] * 1.15:
+                if float(self.queues[self.active_approach]) <= 1e-6 and float(self.queues[other]) > 1e-6:
+                    desired_approach = other
+                elif (
+                    float(self.queues[other]) > 1e-6
+                    and self.arm_scores[other] > self.arm_scores[self.active_approach] * 1.15
+                ):
                     desired_approach = other
                 else:
                     desired_approach = self.active_approach
             else:
-                desired_approach = pair[0] if self.arm_scores[pair[0]] >= self.arm_scores[pair[1]] else pair[1]
+                q0, q1 = float(self.queues[pair[0]]), float(self.queues[pair[1]])
+                if q0 <= 1e-6 and q1 > 1e-6:
+                    desired_approach = pair[1]
+                elif q1 <= 1e-6 and q0 > 1e-6:
+                    desired_approach = pair[0]
+                else:
+                    desired_approach = pair[0] if self.arm_scores[pair[0]] >= self.arm_scores[pair[1]] else pair[1]
 
         if self.is_yellow:
             self.yellow_timer -= 1
+            if self.target_approach is None and (self.preemption or not standby):
+                self.target_approach = desired_approach
             if self.yellow_timer <= 0:
                 self.is_yellow = False
                 self.is_all_red = True
@@ -328,18 +362,45 @@ class IntersectionState:
             return
 
         if self.is_all_red:
-            self.all_red_timer -= 1
-            if self.all_red_timer <= 0:
-                self.is_all_red = False
-                self.active_approach = self.target_approach
-                self.phase = 0 if self.active_approach in (0, 1) else 1
-                self.phase_counter = 1
+            if self.all_red_timer > 0:
+                self.all_red_timer -= 1
+                if self.all_red_timer <= 0:
+                    if self.target_approach is None and standby and not self.preemption:
+                        self._update_wait_timers()
+                        return
+                    chosen = desired_approach if self.target_approach is None else self.target_approach
+                    self.is_all_red = False
+                    self.active_approach = chosen
+                    self.target_approach = chosen
+                    self.phase = 0 if self.active_approach in (0, 1) else 1
+                    self.phase_counter = 1
+                self._update_wait_timers()
+                return
+            # Currently resting in Standby All-Red (all_red_timer <= 0)
+            if standby and not self.preemption:
+                self._update_wait_timers()
+                return
+            self.is_all_red = False
+            self.active_approach = desired_approach
+            self.target_approach = desired_approach
+            self.phase = 0 if self.active_approach in (0, 1) else 1
+            self.phase_counter = 1
+            self._update_wait_timers()
+            return
+
+        if standby and not self.preemption:
+            self.target_approach = None
+            self.is_yellow = True
+            self.yellow_timer = 1
             self._update_wait_timers()
             return
 
         if desired_approach != self.active_approach:
-            # Preemption initiates amber clearance immediately; normal switching respects min_green
-            if self.preemption or self.phase_counter >= self.min_green:
+            active_q = float(self.queues[self.active_approach])
+            desired_q = float(self.queues[desired_approach])
+            gap_out = active_q < 0.35 and desired_q > max(1e-6, active_q)
+            # Preemption or fast gap-out initiates amber clearance immediately; normal switching respects min_green
+            if self.preemption or gap_out or self.phase_counter >= self.min_green:
                 self.target_approach = desired_approach
                 self.is_yellow = True
                 self.yellow_timer = 1
@@ -817,6 +878,7 @@ class CityNetworkEnv:
 
             arm_scores = inter.compute_arm_scores(inter.probs)
 
+            standby = False
             if node_id in parsed_actions:
                 kind, val = parsed_actions[node_id]
                 if kind == "arm":
@@ -828,24 +890,36 @@ class CityNetworkEnv:
                     inter.probs = [1.0 if act == 0 else 0.0, 1.0 if act == 1 else 0.0]
                     target_app = None
             else:
-                best_app = int(np.argmax(arm_scores))
-                cur_app = inter.active_approach
-                # Switch only when another arm clearly exceeds current arm or current queue is nearly drained
-                if (
-                    best_app != cur_app
-                    and (
-                        arm_scores[best_app] > arm_scores[cur_app] * 1.10
-                        or inter.queues[cur_app] < 0.35
-                        or inter.wait_timers[best_app] >= 8
-                    )
-                ):
-                    target_app = best_app
+                if all(float(q) <= 1e-6 for q in inter.queues) and not inter.preemption:
+                    standby = True
+                    target_app = None
+                    act = int(inter.phase)
                 else:
-                    target_app = cur_app
-                act = 0 if target_app in (0, 1) else 1
+                    best_app = int(np.argmax(arm_scores))
+                    cur_app = inter.active_approach
+                    cur_q = float(inter.queues[cur_app])
+                    best_q = float(inter.queues[best_app])
+                    # Never pick an empty arm when any other arm has vehicles; switch on
+                    # empty/drained active arm, clear score lead, or queued wait >= 8.
+                    if (
+                        best_app != cur_app
+                        and best_q > 1e-6
+                        and (
+                            cur_q <= 1e-6
+                            or (cur_q < 0.35 and best_q > cur_q)
+                            or arm_scores[best_app] > arm_scores[cur_app] * 1.10
+                            or inter.wait_timers[best_app] >= 8
+                        )
+                    ):
+                        target_app = best_app
+                    elif cur_q <= 1e-6 and best_q > 1e-6:
+                        target_app = best_app
+                    else:
+                        target_app = cur_app
+                    act = 0 if target_app in (0, 1) else 1
 
             inter.last_action = act
-            inter.apply_action(act, target_approach=target_app)
+            inter.apply_action(act, target_approach=target_app, standby=standby)
 
         # 3. Collect arrivals: External commuter demand + in-transit corridor arrivals
         # Implements true physical vehicle conservation across the city network
