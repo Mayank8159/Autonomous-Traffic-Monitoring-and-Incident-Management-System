@@ -361,7 +361,7 @@ def run_e2e_tests():
 
         print(f"[PASS] Active Fleet: {veh_verification['fleetSize']} vehicles across classes: {veh_verification['types']}", flush=True)
         print(f"[PASS] 6-Wheel Transit Buses: {veh_verification['busCount']}, Emergency Cruisers: {veh_verification['emergencyPoliceCount']}, Ambulances: {veh_verification['emergencyAmbulanceCount']}", flush=True)
-        assert veh_verification["fleetSize"] >= 40, f"Expected >= 40 vehicles, found {veh_verification['fleetSize']}"
+        assert veh_verification["fleetSize"] == 44, f"Expected exactly 44 vehicles, found {veh_verification['fleetSize']}"
         assert "bus" in veh_verification["types"], "No transit buses found in fleet"
         assert "sedan" in veh_verification["types"], "No sedans found in fleet"
         assert veh_verification["groundContactValid"], f"Ground contact projection invalid: {veh_verification['errors']}"
@@ -432,6 +432,11 @@ def run_e2e_tests():
             # Switch back to city view
             page.locator("#btnViewCity").click()
             page.wait_for_timeout(500)
+
+        # Clear simulated incident to restore normal flow
+        print("[E2E] Resolving all active incidents to clear arterial corridors...", flush=True)
+        page.evaluate("() => resolveAllIncidents()")
+        page.wait_for_timeout(800)
 
         # =========================================================================
         # 7. REAL-TIME SIGNAL TIMING STATE MACHINE, RED-LIGHT STOPPING & ANTI-COLLISION
@@ -567,6 +572,149 @@ def run_e2e_tests():
         print(f"[PASS] Active turning vehicles: {turn_check['count']}, Min clearance to other vehicles: {turn_check['minDistance']:.2f}px", flush=True)
         assert turn_check["clipViolations"] == 0, f"Turning vehicles clipped into other vehicles: {turn_check}"
         print("[PASS] Turning vehicle clearance verified: ZERO clipping into other vehicles.", flush=True)
+
+        # 7.6 True Queue Discipline & Bumper Stacking (Gap >= 28px without overlapping when red)
+        print("[E2E] Verifying True Queue Discipline & Stacking at red signals (gap >= 28px, zero overlap)...", flush=True)
+        e2e_queue_check = page.evaluate("""() => {
+            const violations = [];
+            let totalStoppedPairs = 0;
+
+            for (const cId of Object.keys(CORRIDORS)) {
+                const corr = CORRIDORS[cId];
+                for (const dir of [1, -1]) {
+                    const laneVehicles = vehicles.filter(v => v.state === 'CRUISING' && v.corridorId === cId && v.direction === dir);
+                    if (laneVehicles.length <= 1) continue;
+
+                    if (corr.isHorizontal) {
+                        laneVehicles.sort((a, b) => (b.x - a.x) * dir);
+                    } else {
+                        laneVehicles.sort((a, b) => (b.y - a.y) * dir);
+                    }
+
+                    for (let k = 1; k < laneVehicles.length; k++) {
+                        const lead = laneVehicles[k - 1];
+                        const trail = laneVehicles[k];
+                        const distAhead = corr.isHorizontal ? (lead.x - trail.x) * dir : (lead.y - trail.y) * dir;
+                        const euclideanDist = Math.hypot(lead.x - trail.x, lead.y - trail.y);
+
+                        if (lead.speed === 0 && trail.speed === 0) {
+                            totalStoppedPairs++;
+                            if (distAhead < 27.9) {
+                                violations.push({ type: 'gap_too_small', leadId: lead.id, trailId: trail.id, distAhead, euclideanDist });
+                            }
+                            if (euclideanDist < 26.0) {
+                                violations.push({ type: 'overlap', leadId: lead.id, trailId: trail.id, euclideanDist });
+                            }
+                        }
+                    }
+                }
+            }
+            return { totalStoppedPairs, violations };
+        }""")
+        print(f"[E2E] Total stopped queue pairs evaluated: {e2e_queue_check['totalStoppedPairs']}, violations: {len(e2e_queue_check['violations'])}", flush=True)
+        assert len(e2e_queue_check["violations"]) == 0, f"Queue discipline violations detected: {e2e_queue_check['violations']}"
+        print("[PASS] True queue discipline verified: all stopped vehicles queue strictly on lane axis with gap >= 28px and zero overlap.", flush=True)
+
+        shot_e2e_queue = os.path.join(ROOT_DIR, "results", "queue_discipline_red_signal.png")
+        page.screenshot(path=shot_e2e_queue, full_page=False)
+        assert os.path.exists(shot_e2e_queue) and os.path.getsize(shot_e2e_queue) > 20000
+        print(f"[PASS] Queue discipline screenshot saved to {shot_e2e_queue} ({os.path.getsize(shot_e2e_queue)} bytes)", flush=True)
+
+        # 7.7 Zero Lateral Displacement (Rigid Lane Centerline Adherence)
+        print("[E2E] Verifying Zero Lateral Displacement across fleet (rigid lane centerline adherence)...", flush=True)
+        e2e_lateral_check = page.evaluate("""() => {
+            let maxLateralErr = 0.0;
+            const violations = [];
+
+            for (const v of vehicles) {
+                if (v.state !== 'CRUISING') continue;
+                const corr = CORRIDORS[v.corridorId];
+                if (!corr) continue;
+
+                let expectedX = v.x;
+                let expectedY = v.y;
+                let latErr = 0.0;
+
+                if (corr.isHorizontal) {
+                    expectedY = (v.direction === 1) ? corr.y + 16 : corr.y - 16;
+                    latErr = Math.abs(v.y - expectedY);
+                } else {
+                    expectedX = (v.direction === 1) ? corr.x - 16 : corr.x + 16;
+                    latErr = Math.abs(v.x - expectedX);
+                }
+
+                if (latErr > maxLateralErr) maxLateralErr = latErr;
+                if (latErr > 0.001) {
+                    violations.push({ id: v.id, corr: v.corridorId, dir: v.direction, latErr });
+                }
+            }
+            return { maxLateralErr, violations };
+        }""")
+        print(f"[E2E] Max lateral centerline deviation: {e2e_lateral_check['maxLateralErr']:.6f}px", flush=True)
+        assert len(e2e_lateral_check["violations"]) == 0, f"Lateral displacement detected! Violations: {e2e_lateral_check['violations']}"
+        assert e2e_lateral_check["maxLateralErr"] < 0.001, f"Lateral displacement {e2e_lateral_check['maxLateralErr']}px >= 0.001px"
+        print("[PASS] Zero lateral displacement verified: 100% of cruising/queuing vehicles stay rigidly on lane centerlines.", flush=True)
+
+        shot_e2e_lane = os.path.join(ROOT_DIR, "results", "lane_discipline_centerline.png")
+        page.screenshot(path=shot_e2e_lane, full_page=False)
+        assert os.path.exists(shot_e2e_lane) and os.path.getsize(shot_e2e_lane) > 20000
+        print(f"[PASS] Lane discipline screenshot saved to {shot_e2e_lane} ({os.path.getsize(shot_e2e_lane)} bytes)", flush=True)
+
+        # 7.8 Zero Deadlock: Vehicles with GREEN signals advance freely through intersections
+        print("[E2E] Verifying Zero Deadlock: vehicles with GREEN signals advance freely through intersections...", flush=True)
+        e2e_deadlock_check = page.evaluate("""() => {
+            let greenCount = 0;
+            let advancingCount = 0;
+            const deadlocked = [];
+
+            for (const v of vehicles) {
+                if (v.state !== 'CRUISING' || v.isEmergency || !v.nextIntersection) continue;
+                const nearIncident = (typeof activeIncidents !== 'undefined') && activeIncidents.some(inc => Math.hypot(inc.x - v.x, inc.y - v.y) < 70);
+                if (nearIncident) continue;
+                const corr = CORRIDORS[v.corridorId];
+                const juncState = junctionStates[v.nextIntersection];
+                const sig = getJunctionSignal(juncState, corr.isHorizontal);
+                const junc = INTERSECTIONS[v.nextIntersection];
+                const distToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
+
+                if (sig === 'green' && distToCenter > 0 && distToCenter < 120) {
+                    greenCount++;
+
+                    let leadDist = 9999;
+                    for (const o of vehicles) {
+                        if (o.id === v.id || o.corridorId !== v.corridorId || o.direction !== v.direction) continue;
+                        const d = corr.isHorizontal ? (o.x - v.x) * v.direction : (o.y - v.y) * v.direction;
+                        if (d > 0 && d < leadDist) leadDist = d;
+                    }
+
+                    let turningInJunc = false;
+                    for (const o of vehicles) {
+                        if (o.id === v.id) continue;
+                        if (Math.abs(o.x - junc.x) < 24 && Math.abs(o.y - junc.y) < 24 && (o.state === 'TURNING' || (o.corridorId !== v.corridorId && o.speed > 0.05))) {
+                            turningInJunc = true;
+                            break;
+                        }
+                    }
+
+                    if (leadDist > 40 && !turningInJunc) {
+                        if (v.speed > 0.1 || v.accel > 0) {
+                            advancingCount++;
+                        } else if (v.speed === 0 && v.accel <= 0) {
+                            deadlocked.push({ id: v.id, corridor: v.corridorId, distToCenter, leadDist, speed: v.speed, accel: v.accel });
+                        }
+                    }
+                }
+            }
+            return { greenCount, advancingCount, deadlocked };
+        }""")
+        print(f"[E2E] Green signal approach vehicles: {e2e_deadlock_check['greenCount']}, advancing: {e2e_deadlock_check['advancingCount']}, deadlocked: {len(e2e_deadlock_check['deadlocked'])}", flush=True)
+        assert len(e2e_deadlock_check["deadlocked"]) == 0, f"Deadlocked vehicles detected at green signals: {e2e_deadlock_check['deadlocked']}"
+        print("[PASS] Zero deadlock verified: all vehicles with green signals and open headways advance freely through intersections.", flush=True)
+
+        shot_e2e_green = os.path.join(ROOT_DIR, "results", "green_wave_free_advance.png")
+        page.screenshot(path=shot_e2e_green, full_page=False)
+        assert os.path.exists(shot_e2e_green) and os.path.getsize(shot_e2e_green) > 20000
+        print(f"[PASS] Green wave free advance screenshot saved to {shot_e2e_green} ({os.path.getsize(shot_e2e_green)} bytes)", flush=True)
 
         # Check Console Errors
         print(f"\n[E2E] Total console logs recorded: {len(console_logs)}", flush=True)

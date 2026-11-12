@@ -2554,12 +2554,12 @@
                 // Free-flow acceleration towards targetSpeed
                 let desiredAccel = aMax * (1 - Math.pow(v.speed / Math.max(0.1, v.targetSpeed), 4));
 
-                // Same-lane car-following deceleration (IDM)
+                // Same-lane car-following acceleration / deceleration (True IDM)
                 if (minLeadDist < 120) {
                     const deltaV = v.speed - leadSpeed;
                     const sStar = s0 + Math.max(0, v.speed * T + (v.speed * deltaV) / (2 * Math.sqrt(aMax * bComf)));
-                    const carFollowingDecel = -aMax * Math.pow(sStar / Math.max(1, minLeadDist), 2);
-                    desiredAccel = Math.min(desiredAccel, carFollowingDecel);
+                    const idmAccel = aMax * (1 - Math.pow(v.speed / Math.max(0.1, v.targetSpeed), 4) - Math.pow(sStar / Math.max(1, minLeadDist), 2));
+                    desiredAccel = Math.min(desiredAccel, idmAccel);
                 }
 
                 // Red light approach deceleration (smooth IDM deceleration to stop bar)

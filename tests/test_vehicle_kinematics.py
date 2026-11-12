@@ -81,9 +81,9 @@ def run_kinematics_verification():
                 groundTiresValid: groundTiresValid
             };
         }""")
-        assert fleet_info["total"] >= 40, f"Expected >= 40 vehicles, found {fleet_info['total']}"
+        assert fleet_info["total"] == 44, f"Expected exactly 44 vehicles, found {fleet_info['total']}"
         assert fleet_info["groundTiresValid"], "Vehicle tire ground contact invalid!"
-        print(f"[PASS] Active vehicle fleet count: {fleet_info['total']} vehicles ({fleet_info['types']})", flush=True)
+        print(f"[PASS] Active vehicle fleet count: exactly {fleet_info['total']} vehicles ({fleet_info['types']})", flush=True)
         print("[PASS] True 3D vehicle ground contact verified for all vehicles at z=0 asphalt level.", flush=True)
 
         # 3. Test Chase Cam Engagement on a moving vehicle
@@ -342,6 +342,183 @@ def run_kinematics_verification():
             assert r_veh["isBraking"], f"Vehicle #{r_veh['id']} brake light not active while stopped at red light"
         if len(red_stop_data) > 0:
             print(f"[PASS] Stop bar compliance: all {len(red_stop_data)} queued vehicles holding speed = 0.0 at red lights.", flush=True)
+
+        # 11A. True Queue Discipline & Stacking: Gap >= 28px without overlapping when red
+        print("[KINEMATICS] Verifying True Queue Discipline & Stacking at red signals (gap >= 28px, zero overlap)...", flush=True)
+        queue_compliance = page.evaluate("""() => {
+            const queues = [];
+            const violations = [];
+            let totalQueuePairs = 0;
+
+            for (const cId of Object.keys(CORRIDORS)) {
+                const corr = CORRIDORS[cId];
+                for (const dir of [1, -1]) {
+                    const laneVehicles = vehicles.filter(v => v.state === 'CRUISING' && v.corridorId === cId && v.direction === dir);
+                    if (laneVehicles.length <= 1) continue;
+
+                    // Sort leading to trailing along travel direction
+                    if (corr.isHorizontal) {
+                        laneVehicles.sort((a, b) => (b.x - a.x) * dir);
+                    } else {
+                        laneVehicles.sort((a, b) => (b.y - a.y) * dir);
+                    }
+
+                    for (let k = 1; k < laneVehicles.length; k++) {
+                        const lead = laneVehicles[k - 1];
+                        const trail = laneVehicles[k];
+                        const distAhead = corr.isHorizontal ? (lead.x - trail.x) * dir : (lead.y - trail.y) * dir;
+                        const euclideanDist = Math.hypot(lead.x - trail.x, lead.y - trail.y);
+
+                        // If trailing car is queued behind lead (both stopped)
+                        if (lead.speed === 0 && trail.speed === 0) {
+                            totalQueuePairs++;
+                            // Expected gap >= 28px
+                            if (distAhead < 27.9) {
+                                violations.push({
+                                    type: 'gap_too_small',
+                                    leadId: lead.id,
+                                    trailId: trail.id,
+                                    distAhead: distAhead,
+                                    euclidean: euclideanDist
+                                });
+                            }
+                            // Bounding box overlap check
+                            if (euclideanDist < 26.0) {
+                                violations.push({
+                                    type: 'overlap',
+                                    leadId: lead.id,
+                                    trailId: trail.id,
+                                    euclidean: euclideanDist
+                                });
+                            }
+                            queues.push({
+                                corridorId: cId,
+                                dir: dir,
+                                leadId: lead.id,
+                                trailId: trail.id,
+                                distAhead: distAhead,
+                                euclidean: euclideanDist
+                            });
+                        }
+                    }
+                }
+            }
+            return { queues, violations, totalQueuePairs };
+        }""")
+        print(f"[KINEMATICS] Analyzed {queue_compliance['totalQueuePairs']} stopped queue pairs. Violations: {len(queue_compliance['violations'])}", flush=True)
+        assert len(queue_compliance["violations"]) == 0, f"Queue discipline violations: {queue_compliance['violations']}"
+        print("[PASS] True queue discipline verified: all stopped vehicles queue strictly on lane axis with gap >= 28px and zero overlap.", flush=True)
+
+        shot_queue = os.path.join(ROOT_DIR, "results", "queue_discipline_red_signal.png")
+        page.screenshot(path=shot_queue, full_page=False)
+        assert os.path.exists(shot_queue) and os.path.getsize(shot_queue) > 20000
+        print(f"[PASS] Queue discipline screenshot saved to {shot_queue} ({os.path.getsize(shot_queue)} bytes)", flush=True)
+
+        # 11B. Zero Lateral Displacement: Cars stay rigidly on their lane centerlines
+        print("[KINEMATICS] Verifying Zero Lateral Displacement across fleet (rigid lane centerline adherence)...", flush=True)
+        lateral_check = page.evaluate("""() => {
+            let maxLateralError = 0.0;
+            const lateralViolations = [];
+
+            for (const v of vehicles) {
+                if (v.state !== 'CRUISING') continue;
+                const corr = CORRIDORS[v.corridorId];
+                if (!corr) continue;
+
+                let expectedX = v.x;
+                let expectedY = v.y;
+                let latErr = 0.0;
+
+                if (corr.isHorizontal) {
+                    expectedY = (v.direction === 1) ? corr.y + 16 : corr.y - 16;
+                    latErr = Math.abs(v.y - expectedY);
+                } else {
+                    expectedX = (v.direction === 1) ? corr.x - 16 : corr.x + 16;
+                    latErr = Math.abs(v.x - expectedX);
+                }
+
+                if (latErr > maxLateralError) maxLateralError = latErr;
+                if (latErr > 0.001) {
+                    lateralViolations.push({ id: v.id, corridor: v.corridorId, dir: v.direction, actual: {x: v.x, y: v.y}, latErr });
+                }
+            }
+            return { maxLateralError, violations: lateralViolations };
+        }""")
+        print(f"[KINEMATICS] Max lateral centerline deviation: {lateral_check['maxLateralError']:.6f}px", flush=True)
+        assert len(lateral_check["violations"]) == 0, f"Lateral displacement detected! Violations: {lateral_check['violations']}"
+        assert lateral_check["maxLateralError"] < 0.001, f"Lateral displacement error {lateral_check['maxLateralError']}px >= 0.001px"
+        print("[PASS] Zero lateral displacement verified: 100% of cruising/queuing vehicles stay rigidly on lane centerlines.", flush=True)
+
+        shot_lane = os.path.join(ROOT_DIR, "results", "lane_discipline_centerline.png")
+        page.screenshot(path=shot_lane, full_page=False)
+        assert os.path.exists(shot_lane) and os.path.getsize(shot_lane) > 20000
+        print(f"[PASS] Lane discipline screenshot saved to {shot_lane} ({os.path.getsize(shot_lane)} bytes)", flush=True)
+
+        # 11C. Zero Deadlock: Vehicles with GREEN signals advance freely through intersections
+        print("[KINEMATICS] Verifying Zero Deadlock: vehicles with GREEN signals advance freely through intersections...", flush=True)
+        deadlock_check = page.evaluate("""() => {
+            let greenVehiclesCount = 0;
+            let advancingCount = 0;
+            const deadlockedVehicles = [];
+
+            for (const v of vehicles) {
+                if (v.state !== 'CRUISING' || v.isEmergency || !v.nextIntersection) continue;
+                const nearIncident = (typeof activeIncidents !== 'undefined') && activeIncidents.some(inc => Math.hypot(inc.x - v.x, inc.y - v.y) < 70);
+                if (nearIncident) continue;
+                const corr = CORRIDORS[v.corridorId];
+                const juncState = junctionStates[v.nextIntersection];
+                const sig = getJunctionSignal(juncState, corr.isHorizontal);
+                const junc = INTERSECTIONS[v.nextIntersection];
+                const distToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
+
+                if (sig === 'green' && distToCenter > 0 && distToCenter < 120) {
+                    greenVehiclesCount++;
+
+                    // Check if lead vehicle in same lane is directly in front
+                    let leadDist = 9999;
+                    for (const o of vehicles) {
+                        if (o.id === v.id || o.corridorId !== v.corridorId || o.direction !== v.direction) continue;
+                        const d = corr.isHorizontal ? (o.x - v.x) * v.direction : (o.y - v.y) * v.direction;
+                        if (d > 0 && d < leadDist) leadDist = d;
+                    }
+
+                    // Also check if turning vehicle is inside intersection
+                    let turningInJunc = false;
+                    for (const o of vehicles) {
+                        if (o.id === v.id) continue;
+                        if (Math.abs(o.x - junc.x) < 24 && Math.abs(o.y - junc.y) < 24 && (o.state === 'TURNING' || (o.corridorId !== v.corridorId && o.speed > 0.05))) {
+                            turningInJunc = true;
+                            break;
+                        }
+                    }
+
+                    // If path ahead is clear (> 40px lead headway and no conflicting vehicle in box)
+                    if (leadDist > 40 && !turningInJunc) {
+                        if (v.speed > 0.1 || v.accel > 0) {
+                            advancingCount++;
+                        } else if (v.speed === 0 && v.accel <= 0) {
+                            deadlockedVehicles.push({
+                                id: v.id,
+                                corridor: v.corridorId,
+                                distToCenter: distToCenter,
+                                leadDist: leadDist,
+                                speed: v.speed,
+                                accel: v.accel
+                            });
+                        }
+                    }
+                }
+            }
+            return { greenVehiclesCount, advancingCount, deadlockedVehicles };
+        }""")
+        print(f"[KINEMATICS] Green signal approach vehicles: {deadlock_check['greenVehiclesCount']}, actively advancing: {deadlock_check['advancingCount']}, deadlocked: {len(deadlock_check['deadlockedVehicles'])}", flush=True)
+        assert len(deadlock_check["deadlockedVehicles"]) == 0, f"Deadlocked vehicles detected at green signals: {deadlock_check['deadlockedVehicles']}"
+        print("[PASS] Zero deadlock verified: all vehicles with green signals and open headways advance freely through intersections.", flush=True)
+
+        shot_green = os.path.join(ROOT_DIR, "results", "green_wave_free_advance.png")
+        page.screenshot(path=shot_green, full_page=False)
+        assert os.path.exists(shot_green) and os.path.getsize(shot_green) > 20000
+        print(f"[PASS] Green wave free advance screenshot saved to {shot_green} ({os.path.getsize(shot_green)} bytes)", flush=True)
 
         # 12. Zero Inter-Vehicle Bounding Box Collisions (Minimum Distance >= 24px)
         print("[KINEMATICS] Verifying 0 inter-vehicle bounding box collisions (min distance >= 24px)...", flush=True)
