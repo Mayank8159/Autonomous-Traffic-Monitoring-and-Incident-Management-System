@@ -259,9 +259,29 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
 
+    def do_HEAD(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        if path in ("/health", "/healthz", "/api/status"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            return
+        if path in ("/", "/index.html"):
+            self.send_response(302)
+            self.send_header("Location", "/web_visualizer/visualizer.html")
+            self.end_headers()
+            return
+        super().do_HEAD()
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+
+        # Platform health probe endpoint (Render, Railway, Docker, Kubernetes)
+        if path in ("/health", "/healthz"):
+            self._send_json_response({"status": "ok", "service": "atms"})
+            return
 
         # Root redirect
         if path in ("/", "/index.html"):
@@ -688,20 +708,22 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
         )
         t.start()
 
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps({"started": True}).encode("utf-8"))
+        self._send_json_response({"started": True})
         print(f"[Server] Upload accepted – background job started.")
 
 
+_PERSISTENT_UPLOADS = {"13868599_3840_2160_24fps.mp4", "prepared.mp4"}
+
+
 def _cleanup_old_uploads():
-    """Delete files in uploads/ older than 1 hour. Never touches anything outside uploads/."""
+    """Delete unreferenced temporary files in uploads/ older than 24 hours."""
     uploads_dir = os.path.join(ROOT_DIR, "uploads")
     if not os.path.isdir(uploads_dir):
         return
-    cutoff = time.time() - 3600
+    cutoff = time.time() - 86400
     for fname in os.listdir(uploads_dir):
+        if fname in _PERSISTENT_UPLOADS or fname.startswith("."):
+            continue
         fpath = os.path.join(uploads_dir, fname)
         try:
             if os.path.isfile(fpath) and os.path.getmtime(fpath) < cutoff:
@@ -709,26 +731,22 @@ def _cleanup_old_uploads():
                 print(f"[Server] Cleaned up old upload: {fname}")
         except Exception:
             pass
-    # Clean debug directory
-    debug_dir = os.path.join(uploads_dir, "debug")
-    if os.path.isdir(debug_dir):
-        import shutil
-        try:
-            shutil.rmtree(debug_dir)
-            print("[Server] Cleaned up uploads/debug/")
-        except Exception:
-            pass
 
 
-def start_server(port=8000, host="0.0.0.0"):
+def start_server(port=None, host=None):
     """Starts the multi-threaded ATMS web server."""
+    if port is None:
+        port = int(os.environ.get("PORT", 8000))
+    if host is None:
+        host = os.environ.get("HOST", "0.0.0.0")
     os.makedirs(os.path.join(ROOT_DIR, "uploads"), exist_ok=True)
     _cleanup_old_uploads()
+    ThreadingHTTPServer.allow_reuse_address = True
     server_address = (host, port)
     httpd = ThreadingHTTPServer(server_address, ATMSRequestHandler)
     print(f"\n=======================================================")
     print(f"[ATMS] Autonomous Traffic Monitoring & Web Server Live")
-    print(f"[ATMS] Serving at: http://localhost:{port}/web_visualizer/visualizer.html")
+    print(f"[ATMS] Serving at: http://{host}:{port}/web_visualizer/visualizer.html")
     print(f"[ATMS] Root directory: {ROOT_DIR}")
     print(f"=======================================================\n")
     try:
@@ -740,8 +758,10 @@ def start_server(port=8000, host="0.0.0.0"):
 
 if __name__ == "__main__":
     import argparse
+    default_port = int(os.environ.get("PORT", 8000))
+    default_host = os.environ.get("HOST", "0.0.0.0")
     parser = argparse.ArgumentParser(description="ATMS Web Server & Video Processing API")
-    parser.add_argument("--port", type=int, default=8000, help="Server port (default: 8000)")
-    parser.add_argument("--host", type=str, default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=default_port, help=f"Server port (default: $PORT or {default_port})")
+    parser.add_argument("--host", type=str, default=default_host, help=f"Bind address (default: $HOST or {default_host})")
     args = parser.parse_args()
     start_server(port=args.port, host=args.host)

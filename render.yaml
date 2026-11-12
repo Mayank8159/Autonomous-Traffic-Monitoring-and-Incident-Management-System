@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: atms-command-center
+    env: docker
+    plan: starter
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: HOST
+        value: "0.0.0.0"

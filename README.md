@@ -278,6 +278,29 @@ Autonomous-Traffic-Monitoring-and-Incident-Management-System/
 
 ---
 
+## 🌐 Deployment Guide
+
+The server supports container and PaaS deployments out of the box using environment variables (`PORT`, default `8000`; `HOST`, default `0.0.0.0`) and exposes `GET` / `HEAD` `/health` (and `/healthz`) readiness probes alongside `/api/status`.
+
+### 1. Docker (Recommended)
+```bash
+docker build -t atms-command-center .
+docker run -p 8000:8000 -e PORT=8000 atms-command-center
+```
+Open `http://localhost:8000/` (redirects to `/web_visualizer/visualizer.html`).
+
+### 2. Cloud PaaS (Render / Railway / Procfile)
+- **Render**: Blueprint included via `render.yaml` (`env: docker`, `healthCheckPath: /health`).
+- **Railway**: Configured via `railway.json` (`DOCKERFILE` builder, `healthcheckPath: /health`).
+- **Procfile Platforms**: Uses `Procfile` (`web: python server.py`), binding automatically to `$PORT`.
+
+### 3. Production Python Run
+```bash
+PORT=8000 HOST=0.0.0.0 python server.py
+```
+
+---
+
 ## ⚖️ License & Academic Citation
 
 Developed as an academic demonstration of hybrid artificial intelligence for autonomous traffic monitoring and incident management. All neural architectures adhere to syllabus requirements for Deep Learning.

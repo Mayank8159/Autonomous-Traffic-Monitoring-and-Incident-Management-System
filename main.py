@@ -19,7 +19,7 @@ def parse_args():
                         default="rl",
                         help="Run mode: rl, supervised, video, hybrid, gan, vae, cnn-train, server, or city")
 
-    parser.add_argument("--port", type=int, default=8000, help="Port for ATMS web server (mode server)")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8000)), help="Port for ATMS web server (mode server)")
     parser.add_argument("--algo", type=str, choices=["reinforce", "dqn"], default="reinforce",
                         help="RL algorithm (only in rl mode)")
     parser.add_argument("--epochs", type=int, default=50, help="Number of episodes/epochs for training")

@@ -55,6 +55,14 @@ def run_all_api_tests():
     time.sleep(0.5)
 
     try:
+        # 0. /health & HEAD /health (deployment probe verification)
+        code, health = http_get("/health")
+        assert code == 200 and health.get("status") == "ok", f"Unexpected /health: {code} {health}"
+        head_req = urllib.request.Request(f"{BASE_URL}/health", method="HEAD", headers={"Connection": "close"})
+        with urllib.request.urlopen(head_req, timeout=5) as head_resp:
+            assert head_resp.getcode() == 200, f"Unexpected HEAD /health: {head_resp.getcode()}"
+        print("[PASS] GET & HEAD /health - Deployment readiness probe OK", flush=True)
+
         # 1. /api/status
         code, data = http_get("/api/status")
         assert code == 200, f"Expected 200, got {code}"
