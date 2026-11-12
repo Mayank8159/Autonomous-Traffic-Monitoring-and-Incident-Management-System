@@ -804,9 +804,128 @@
             from { opacity: 0; transform: translateY(4px); }
             to { opacity: 1; transform: translateY(0); }
         }
+
+        /* -------------------------------------------------------------
+           HIGH-TECH BOOT LOADING SCREEN & HUD
+           ------------------------------------------------------------- */
+        .boot-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: radial-gradient(circle at center, #0d1527 0%, #050811 100%);
+            z-index: 99999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.45s ease-out;
+            cursor: pointer;
+        }
+        .boot-box {
+            width: 620px;
+            max-width: 90vw;
+            background: rgba(18, 25, 39, 0.95);
+            border: 1px solid rgba(56, 189, 248, 0.4);
+            box-shadow: 0 0 35px rgba(6, 182, 212, 0.25), inset 0 0 15px rgba(56, 189, 248, 0.1);
+            border-radius: 12px;
+            padding: 24px;
+            backdrop-filter: blur(12px);
+            font-family: 'SF Mono', Menlo, Consolas, monospace;
+        }
+        .boot-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(56, 189, 248, 0.25);
+            padding-bottom: 12px;
+            margin-bottom: 14px;
+        }
+        .boot-logo {
+            font-size: 15px;
+            font-weight: 800;
+            color: var(--accent-cyan);
+            letter-spacing: 1px;
+            text-shadow: 0 0 10px rgba(6, 182, 212, 0.6);
+        }
+        .boot-version {
+            font-size: 10px;
+            color: var(--text-dim);
+        }
+        .boot-terminal {
+            font-size: 11.5px;
+            line-height: 1.7;
+            color: #94a3b8;
+            margin-bottom: 16px;
+            min-height: 170px;
+        }
+        .boot-line {
+            opacity: 0.9;
+            animation: fadeIn 0.15s ease-in;
+        }
+        .boot-line.success {
+            color: var(--accent-lime);
+            font-weight: 700;
+            text-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+        }
+        .boot-progress-wrap {
+            height: 7px;
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            margin-bottom: 12px;
+        }
+        .boot-progress-bar {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #06b6d4, #3b82f6, #10b981);
+            box-shadow: 0 0 12px #06b6d4;
+            transition: width 0.08s ease-out;
+        }
+        .boot-footer {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: var(--text-dim);
+            letter-spacing: 0.5px;
+        }
+        canvas.orbiting {
+            cursor: grab;
+        }
+        canvas.dragging {
+            cursor: grabbing;
+        }
     </style>
 </head>
 <body>
+
+    <!-- HIGH-TECH BOOT LOADING SCREEN -->
+    <div id="bootLoadingScreen" class="boot-screen" onclick="dismissBootScreen()">
+        <div class="boot-box">
+            <div class="boot-header">
+                <span class="boot-logo">⚡ ATMS COMMAND CORE v2.5</span>
+                <span class="boot-version">SYS-BUILD 2026.11 // AUTONOMOUS OS</span>
+            </div>
+            <div class="boot-terminal" id="bootTerminal">
+                <div class="boot-line">[0.08s] GPU WEB ACCELERATOR INITIALIZED</div>
+                <div class="boot-line">[0.18s] PYTORCH RL POLICY (DQN 7D -> 64 -> 32 -> 2) TENSORS LOADED</div>
+                <div class="boot-line">[0.32s] 6-NODE URBAN ROAD TOPOLOGY MAPPED (10 ENTRY GATES)</div>
+                <div class="boot-line">[0.45s] 24 PHYSICAL TRAFFIC SIGNAL CONTROLLERS ONLINE</div>
+                <div class="boot-line">[0.58s] DIJKSTRA EMERGENCY ROUTING & GREEN-WAVE READY</div>
+                <div class="boot-line">[0.72s] SEQUENCE VAE ANOMALY DETECTION ENGINE CALIBRATED</div>
+                <div class="boot-line">[0.88s] UNIFIED 3D DEPTH-SORTED RASTERIZER & ORBIT CAM ONLINE</div>
+                <div class="boot-line success">[1.00s] SYSTEM READY. COMMENCING AUTONOMOUS OPERATIONS.</div>
+            </div>
+            <div class="boot-progress-wrap">
+                <div class="boot-progress-bar" id="bootProgressBar"></div>
+            </div>
+            <div class="boot-footer">
+                <span>CLICK ANYWHERE TO SKIP BOOT SCREEN</span>
+                <span id="bootPercent">0%</span>
+            </div>
+        </div>
+    </div>
 
     <!-- TOP HEADER -->
     <header>
@@ -851,6 +970,7 @@
         <button class="btn primary" id="btnPlayPause" onclick="toggleCitySimulation()">⏸️ Pause</button>
         <button class="btn" onclick="stepCitySimulation()">⏭️ Step</button>
         <button class="btn" onclick="resetCitySimulation()">🔄 Reset Network</button>
+        <button class="btn" id="btnSystemRefresh" onclick="triggerSystemRefresh()">🔄 System Refresh</button>
 
         <div class="speed-slider">
             <span>Speed:</span>
@@ -899,6 +1019,13 @@
                 <button class="cam-btn" title="Cycle Next Junction" onclick="cycleJunctionFocus()">🎯</button>
                 <button class="cam-btn" title="Toggle 2.5D Isometric / Elevated" onclick="toggleProjectionMode()">📐</button>
                 <button class="cam-btn" title="Chase Cam / Track Vehicle" onclick="toggleChaseCam()">🚘</button>
+                <div style="height:1px; background:var(--border-dim); margin:2px 0;"></div>
+                <button class="cam-btn" title="Isometric SW (Default)" onclick="setCameraPreset('SW')">SW</button>
+                <button class="cam-btn" title="Isometric SE" onclick="setCameraPreset('SE')">SE</button>
+                <button class="cam-btn" title="Isometric NE" onclick="setCameraPreset('NE')">NE</button>
+                <button class="cam-btn" title="Isometric NW" onclick="setCameraPreset('NW')">NW</button>
+                <button class="cam-btn" title="Bird's-Eye 90° Top-Down" onclick="setCameraPreset('BIRDS_EYE')">🦅</button>
+                <button class="cam-btn" title="Elevated 25° Cinematic" onclick="setCameraPreset('ELEVATED')">🏙️</button>
             </div>
 
             <!-- Vehicle Chase Cam Telemetry HUD (Floating Neumorphic Panel) -->
@@ -1305,12 +1432,17 @@
         let particles = []; // Smoke, embers, siren shockwaves
         let followedVehicleId = null; // Currently tracked vehicle for Chase Cam (silky smooth camera lock)
 
-        // Camera Transform State
+        // Camera Transform State with Full 3D Multi-Angle Orbit & Free Cam
         let camera = {
             panX: 0,
             panY: 0,
             zoom: 1.0,
+            yaw: 45,        // degrees: 45 = SW (default isometric), 135 = SE, 225 = NE, 315 = NW
+            pitch: 30,      // degrees: 30 = isometric, 25 = elevated, 90 = Bird's Eye
+            targetYaw: 45,
+            targetPitch: 30,
             isDragging: false,
+            isOrbiting: false,
             lastX: 0,
             lastY: 0
         };
@@ -1404,40 +1536,63 @@
             };
         }
 
+        function buildJunctionStateVector(id) {
+            const state = junctionStates[id];
+            if (!state) return [0, 0, 0, 0, 0, 1.0, 0.0];
+            const qs = state.queues || [0, 0, 0, 0];
+            const totalQ = qs[0] + qs[1] + qs[2] + qs[3];
+            return [
+                qs[0], qs[1], qs[2], qs[3],
+                totalQ,
+                state.phase === 0 ? 1.0 : 0.0,
+                state.phase === 1 ? 1.0 : 0.0
+            ];
+        }
+
         /* =========================================================================
            COORDINATE PROJECTION & TRANSFORMATION ENGINE
            Supports 2.5D Isometric (angled pseudo-3D) and 2.5D Elevated Command
            ========================================================================= */
 
         function worldToScreen(wx, wy, wz = 0) {
-            if (currentViewMode === "isometric") {
-                const isoX = (wx - wy);
-                const isoY = (wx + wy) * 0.5 - wz;
-                return {
-                    x: camera.panX + (isoX + 450) * camera.zoom,
-                    y: camera.panY + (isoY + 50) * camera.zoom
-                };
-            } else {
-                return {
-                    x: camera.panX + wx * camera.zoom,
-                    y: camera.panY + (wy - wz * 0.6) * camera.zoom
-                };
-            }
+            const cx = CITY_WIDTH / 2;
+            const cy = CITY_HEIGHT / 2;
+            const radYaw = (camera.yaw * Math.PI) / 180;
+            const radPitch = (camera.pitch * Math.PI) / 180;
+
+            const dx = wx - cx;
+            const dy = wy - cy;
+
+            // Rotate in horizontal plane by yaw
+            const xr = dx * Math.cos(radYaw) - dy * Math.sin(radYaw);
+            const yr = dx * Math.sin(radYaw) + dy * Math.cos(radYaw);
+            const zr = wz;
+
+            // Project with pitch tilt
+            const sinP = Math.sin(radPitch);
+            const cosP = Math.cos(radPitch);
+
+            const sx = camera.panX + (cityCanvas.width / 2) + xr * camera.zoom;
+            const sy = camera.panY + (cityCanvas.height / 2) + (yr * sinP - zr * cosP) * camera.zoom;
+            const depth = yr * cosP + zr * sinP;
+
+            return { x: sx, y: sy, depth: depth };
         }
 
         function screenToWorld(sx, sy) {
-            if (currentViewMode === "isometric") {
-                const isoX = (sx - camera.panX) / camera.zoom - 450;
-                const isoY = (sy - camera.panY) / camera.zoom - 50;
-                const wx = (2 * isoY + isoX) / 2;
-                const wy = (2 * isoY - isoX) / 2;
-                return { x: wx, y: wy };
-            } else {
-                return {
-                    x: (sx - camera.panX) / camera.zoom,
-                    y: (sy - camera.panY) / camera.zoom
-                };
-            }
+            const cx = CITY_WIDTH / 2;
+            const cy = CITY_HEIGHT / 2;
+            const radYaw = (camera.yaw * Math.PI) / 180;
+            const radPitch = (camera.pitch * Math.PI) / 180;
+            const sinP = Math.max(0.08, Math.sin(radPitch));
+
+            const xr = (sx - camera.panX - cityCanvas.width / 2) / camera.zoom;
+            const yr = (sy - camera.panY - cityCanvas.height / 2) / (camera.zoom * sinP);
+
+            const dx = xr * Math.cos(radYaw) + yr * Math.sin(radYaw);
+            const dy = -xr * Math.sin(radYaw) + yr * Math.cos(radYaw);
+
+            return { x: dx + cx, y: dy + cy };
         }
 
         // Web Audio Synthesizer
@@ -1466,6 +1621,61 @@
             } catch (e) {}
         }
 
+        // Boot Screen Sequence
+        function initBootScreen() {
+            const bar = document.getElementById("bootProgressBar");
+            const pct = document.getElementById("bootPercent");
+            if (!bar) return;
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += 5;
+                if (progress > 100) progress = 100;
+                bar.style.width = progress + "%";
+                if (pct) pct.textContent = progress + "%";
+                if (progress >= 100) {
+                    clearInterval(interval);
+                    setTimeout(dismissBootScreen, 250);
+                }
+            }, 35);
+        }
+        window.addEventListener("DOMContentLoaded", initBootScreen);
+
+        function dismissBootScreen() {
+            const el = document.getElementById("bootLoadingScreen");
+            if (!el || el.style.display === "none") return;
+            el.style.opacity = "0";
+            el.style.pointerEvents = "none";
+            setTimeout(() => { el.style.display = "none"; }, 400);
+        }
+
+        function triggerSystemRefresh() {
+            playAlertChime();
+            for (const [id, junc] of Object.entries(INTERSECTIONS)) {
+                if (junctionStates[id]) {
+                    const state7d = buildJunctionStateVector(id);
+                    const decision = evaluateRLPolicy(state7d);
+                    junctionStates[id].lastDecision = decision;
+                }
+            }
+            if (vehicles.length < 85) {
+                initVehicles();
+            }
+            particles = particles.filter(p => p.type === "smoke");
+            updateRadarHUD();
+            updateInspectorUI();
+            logDispatchEvent("System", "System refresh executed: all nodes synchronized.");
+            const badge = document.getElementById("topStatusBadge");
+            if (badge && activeIncidents.length === 0) {
+                badge.textContent = "⚡ SYSTEM SYNCED";
+                badge.className = "status-badge normal";
+                setTimeout(() => {
+                    if (activeIncidents.length === 0) {
+                        badge.textContent = "AUTONOMOUS NOMINAL";
+                    }
+                }, 2200);
+            }
+        }
+
         // Initialize Canvases
         const cityCanvas = document.getElementById("cityMapCanvas");
         const ctx = cityCanvas.getContext("2d");
@@ -1487,33 +1697,22 @@
         window.addEventListener("resize", resizeCanvases);
 
         /* =========================================================================
-           FLUID PAN & ZOOM CAMERA ENGINE (SILKY-SMOOTH 60 FPS)
+           FLUID PAN & ZOOM CAMERA ENGINE WITH MULTI-ANGLE ORBIT (60 FPS)
            ========================================================================= */
 
         function resetCameraView() {
-            if (currentViewMode === "isometric") {
-                const targetW = 1900;
-                const targetH = 1200;
-                const scaleX = cityCanvas.width / targetW;
-                const scaleY = cityCanvas.height / targetH;
-                camera.zoom = Math.max(0.45, Math.min(scaleX, scaleY) * 1.35);
-                camera.panX = (cityCanvas.width - 900 * camera.zoom) / 2;
-                camera.panY = (cityCanvas.height - 750 * camera.zoom) / 2;
-            } else {
-                const pad = 40;
-                const scaleX = cityCanvas.width / (CITY_WIDTH + pad * 2);
-                const scaleY = cityCanvas.height / (CITY_HEIGHT + pad * 2);
-                camera.zoom = Math.min(scaleX, scaleY, 1.25);
-                camera.panX = (cityCanvas.width - CITY_WIDTH * camera.zoom) / 2;
-                camera.panY = (cityCanvas.height - CITY_HEIGHT * camera.zoom) / 2;
-            }
+            camera.panX = 0;
+            camera.panY = 0;
+            const scaleX = cityCanvas.width / 1400;
+            const scaleY = cityCanvas.height / 880;
+            camera.zoom = Math.max(0.55, Math.min(scaleX, scaleY) * 1.15);
             updateRadarHUD();
         }
 
         function zoomCamera(factor) {
             const centerX = cityCanvas.width / 2;
             const centerY = cityCanvas.height / 2;
-            const newZoom = Math.max(0.4, Math.min(3.5, camera.zoom * factor));
+            const newZoom = Math.max(0.35, Math.min(3.8, camera.zoom * factor));
             camera.panX = centerX - (centerX - camera.panX) * (newZoom / camera.zoom);
             camera.panY = centerY - (centerY - camera.panY) * (newZoom / camera.zoom);
             camera.zoom = newZoom;
@@ -1548,16 +1747,42 @@
             updateRadarHUD();
         }
 
+        function setCameraPreset(presetName) {
+            if (presetName === "SW") {
+                camera.yaw = 45; camera.pitch = 30; currentViewMode = "isometric";
+            } else if (presetName === "SE") {
+                camera.yaw = 135; camera.pitch = 30; currentViewMode = "isometric";
+            } else if (presetName === "NE") {
+                camera.yaw = 225; camera.pitch = 30; currentViewMode = "isometric";
+            } else if (presetName === "NW") {
+                camera.yaw = 315; camera.pitch = 30; currentViewMode = "isometric";
+            } else if (presetName === "BIRDS_EYE") {
+                camera.yaw = 0; camera.pitch = 90; currentViewMode = "elevated";
+            } else if (presetName === "ELEVATED") {
+                camera.yaw = 45; camera.pitch = 25; currentViewMode = "elevated";
+            }
+            const btn = document.getElementById("btnToggleProjection");
+            if (btn) {
+                btn.textContent = (currentViewMode === "isometric") ? "📐 View: 2.5D Isometric" : "🏙️ View: 2.5D Elevated";
+            }
+            updateRadarHUD();
+        }
+
         function toggleProjectionMode() {
             currentViewMode = (currentViewMode === "isometric") ? "elevated" : "isometric";
             const btn = document.getElementById("btnToggleProjection");
             if (btn) {
                 btn.textContent = (currentViewMode === "isometric") ? "📐 View: 2.5D Isometric" : "🏙️ View: 2.5D Elevated";
             }
+            if (currentViewMode === "isometric") {
+                setCameraPreset("SW");
+            } else {
+                setCameraPreset("ELEVATED");
+            }
             resetCameraView();
         }
 
-        // Mouse Drag Panning & Wheel Zooming
+        // Mouse Drag Panning & Continuous Yaw/Pitch Orbiting
         cityCanvas.addEventListener("mousedown", (e) => {
             if (activeIncidentPlacement) {
                 const w = screenToWorld(e.offsetX, e.offsetY);
@@ -1566,37 +1791,57 @@
                 return;
             }
 
-            // User manual panning disengages vehicle lock
             if (followedVehicleId !== null) {
                 disengageChaseCam();
             }
 
-            camera.isDragging = true;
-            camera.lastX = e.clientX;
-            camera.lastY = e.clientY;
-            cityCanvas.classList.add("dragging");
+            // Right-click or Shift-Left-click activates Continuous Orbit Free Cam
+            if (e.button === 2 || e.shiftKey) {
+                camera.isOrbiting = true;
+                camera.lastX = e.clientX;
+                camera.lastY = e.clientY;
+                cityCanvas.classList.add("orbiting");
+            } else if (e.button === 0) {
+                camera.isDragging = true;
+                camera.lastX = e.clientX;
+                camera.lastY = e.clientY;
+                cityCanvas.classList.add("dragging");
+            }
         });
 
+        cityCanvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
         window.addEventListener("mousemove", (e) => {
-            if (!camera.isDragging) return;
-            const dx = e.clientX - camera.lastX;
-            const dy = e.clientY - camera.lastY;
-            camera.panX += dx;
-            camera.panY += dy;
-            camera.lastX = e.clientX;
-            camera.lastY = e.clientY;
-            updateRadarHUD();
+            if (camera.isOrbiting) {
+                const dx = e.clientX - camera.lastX;
+                const dy = e.clientY - camera.lastY;
+                camera.yaw = (camera.yaw + dx * 0.45 + 360) % 360;
+                camera.pitch = Math.max(15, Math.min(90, camera.pitch - dy * 0.35));
+                camera.lastX = e.clientX;
+                camera.lastY = e.clientY;
+                updateRadarHUD();
+            } else if (camera.isDragging) {
+                const dx = e.clientX - camera.lastX;
+                const dy = e.clientY - camera.lastY;
+                camera.panX += dx;
+                camera.panY += dy;
+                camera.lastX = e.clientX;
+                camera.lastY = e.clientY;
+                updateRadarHUD();
+            }
         });
 
         window.addEventListener("mouseup", () => {
             camera.isDragging = false;
+            camera.isOrbiting = false;
             cityCanvas.classList.remove("dragging");
+            cityCanvas.classList.remove("orbiting");
         });
 
         cityCanvas.addEventListener("wheel", (e) => {
             e.preventDefault();
             const factor = e.deltaY < 0 ? 1.12 : 0.88;
-            const newZoom = Math.max(0.4, Math.min(3.5, camera.zoom * factor));
+            const newZoom = Math.max(0.35, Math.min(3.8, camera.zoom * factor));
             camera.panX = e.offsetX - (e.offsetX - camera.panX) * (newZoom / camera.zoom);
             camera.panY = e.offsetY - (e.offsetY - camera.panY) * (newZoom / camera.zoom);
             camera.zoom = newZoom;
@@ -1645,15 +1890,6 @@
             camera.panY += cityCanvas.height / 2 - sc.y;
             updateRadarHUD();
         });
-
-        /* =========================================================================
-           ADVANCED 2.5D VEHICLE KINEMATICS, ROUTE-FOLLOWING & CHASE CAM ENGINE
-           - Zero teleportation: continuous trajectories across the city network
-           - Intelligent Driver Model (IDM) with comfortable car-following & braking
-           - Smooth Quadratic Bezier turn arcs at all 6 intersections
-           - Safe off-screen buffer spawning & despawning at 10 perimeter gates
-           - Camera lock Chase Cam with live telemetry HUD
-           ========================================================================= */
 
         function initVehicles() {
             vehicles = [];
@@ -2649,34 +2885,207 @@
            Blending Neumorphism and Skeuomorphism
            ========================================================================= */
 
+        /* =========================================================================
+           AAA WORLD-CLASS 2.5D / 3D GRAPHICS RENDER ENGINE
+           1. Unified Depth-Sorted Render Queue (Painter's Algorithm back-to-front)
+           2. True 2.5D 3D-extruded isometric vehicle models with road-contact tires,
+              ground shadows, shaded chassis panels, and cabin greenhouse extrusion
+           3. Curbs, verges, sidewalk trees, streetlamps casting night pools
+           4. Building glass facades, rooftop HVAC with spinning fans, aviation beacons
+           5. Depth-sorted 24 traffic signals with illuminated approach stop-bars
+           ========================================================================= */
+
+        // Landscaping: Trees along sidewalk verges
+        const SIDEWALK_TREES = [
+            // Grand Ave (Y = 220)
+            { x: 90, y: 172 }, { x: 150, y: 172 }, { x: 330, y: 172 }, { x: 420, y: 172 }, { x: 670, y: 172 }, { x: 760, y: 172 }, { x: 970, y: 172 }, { x: 1040, y: 172 },
+            { x: 90, y: 268 }, { x: 150, y: 268 }, { x: 670, y: 268 }, { x: 760, y: 268 }, { x: 970, y: 268 }, { x: 1040, y: 268 },
+            // River Blvd (Y = 560)
+            { x: 90, y: 512 }, { x: 150, y: 512 }, { x: 330, y: 512 }, { x: 420, y: 512 }, { x: 670, y: 512 }, { x: 760, y: 512 }, { x: 970, y: 512 }, { x: 1040, y: 512 },
+            { x: 90, y: 608 }, { x: 150, y: 608 }, { x: 330, y: 608 }, { x: 420, y: 608 }, { x: 670, y: 608 }, { x: 760, y: 608 }, { x: 970, y: 608 }, { x: 1040, y: 608 },
+            // West Pkwy (X = 220)
+            { x: 172, y: 90 }, { x: 172, y: 150 }, { x: 172, y: 340 }, { x: 172, y: 440 }, { x: 172, y: 650 }, { x: 172, y: 720 },
+            { x: 268, y: 90 }, { x: 268, y: 150 }, { x: 268, y: 650 }, { x: 268, y: 720 },
+            // Central Ave (X = 550)
+            { x: 502, y: 90 }, { x: 502, y: 150 }, { x: 502, y: 650 }, { x: 502, y: 720 },
+            { x: 598, y: 90 }, { x: 598, y: 150 }, { x: 598, y: 650 }, { x: 598, y: 720 },
+            // Financial Way (X = 880)
+            { x: 832, y: 90 }, { x: 832, y: 150 }, { x: 832, y: 340 }, { x: 832, y: 440 }, { x: 832, y: 650 }, { x: 832, y: 720 },
+            { x: 928, y: 90 }, { x: 928, y: 150 }, { x: 928, y: 340 }, { x: 928, y: 440 }, { x: 928, y: 650 }, { x: 928, y: 720 }
+        ];
+
+        // Central Metro Park trees
+        const PARK_TREES = [
+            { x: 315, y: 320 }, { x: 455, y: 320 },
+            { x: 315, y: 460 }, { x: 455, y: 460 },
+            { x: 385, y: 315 }, { x: 385, y: 465 }
+        ];
+
+        // Streetlamps: Steel poles with luminaire heads casting night illumination pools onto asphalt
+        const STREETLAMPS = [
+            // Grand Ave
+            { x: 120, y: 174, armDir: "S" }, { x: 380, y: 174, armDir: "S" }, { x: 710, y: 174, armDir: "S" }, { x: 1010, y: 174, armDir: "S" },
+            { x: 120, y: 266, armDir: "N" }, { x: 710, y: 266, armDir: "N" }, { x: 1010, y: 266, armDir: "N" },
+            // River Blvd
+            { x: 120, y: 514, armDir: "S" }, { x: 380, y: 514, armDir: "S" }, { x: 710, y: 514, armDir: "S" }, { x: 1010, y: 514, armDir: "S" },
+            { x: 120, y: 606, armDir: "N" }, { x: 380, y: 606, armDir: "N" }, { x: 710, y: 606, armDir: "N" }, { x: 1010, y: 606, armDir: "N" },
+            // West Pkwy
+            { x: 174, y: 120, armDir: "E" }, { x: 174, y: 390, armDir: "E" }, { x: 174, y: 680, armDir: "E" },
+            { x: 266, y: 120, armDir: "W" }, { x: 266, y: 680, armDir: "W" },
+            // Central Ave
+            { x: 504, y: 120, armDir: "E" }, { x: 504, y: 680, armDir: "E" },
+            { x: 596, y: 120, armDir: "W" }, { x: 596, y: 680, armDir: "W" },
+            // Financial Way
+            { x: 834, y: 120, armDir: "E" }, { x: 834, y: 390, armDir: "E" }, { x: 834, y: 680, armDir: "E" },
+            { x: 926, y: 120, armDir: "W" }, { x: 926, y: 390, armDir: "W" }, { x: 926, y: 680, armDir: "W" }
+        ];
+
+        // 3D Geometry & Polygon Shading Helpers
+        function localToScreen(v, lx, ly, lz) {
+            const cosH = Math.cos(v.heading);
+            const sinH = Math.sin(v.heading);
+            const wx = v.x + (lx * cosH - ly * sinH);
+            const wy = v.y + (lx * sinH + ly * cosH);
+            const wz = lz;
+            return worldToScreen(wx, wy, wz);
+        }
+
+        function isPolyFrontFacing(p0, p1, p2) {
+            return (p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x) < 0;
+        }
+
+        function draw3DPoly(pts, fillStyle, strokeStyle = null, lineWidth = 1) {
+            if (!pts || pts.length < 3) return;
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) {
+                ctx.lineTo(pts[i].x, pts[i].y);
+            }
+            ctx.closePath();
+            if (fillStyle) {
+                ctx.fillStyle = fillStyle;
+                ctx.fill();
+            }
+            if (strokeStyle) {
+                ctx.strokeStyle = strokeStyle;
+                ctx.lineWidth = lineWidth * camera.zoom;
+                ctx.stroke();
+            }
+        }
+
+        function shadeColor(hex, factor) {
+            if (!hex || hex[0] !== '#') return hex;
+            let col = hex.slice(1);
+            if (col.length === 3) col = col[0] + col[0] + col[1] + col[1] + col[2] + col[2];
+            const r = Math.min(255, Math.max(0, Math.round(parseInt(col.substring(0, 2), 16) * factor)));
+            const g = Math.min(255, Math.max(0, Math.round(parseInt(col.substring(2, 4), 16) * factor)));
+            const b = Math.min(255, Math.max(0, Math.round(parseInt(col.substring(4, 6), 16) * factor)));
+            return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+        }
+
+        /* -------------------------------------------------------------------------
+           UNIFIED DEPTH-SORTED RENDER QUEUE (PAINTER'S ALGORITHM)
+           ------------------------------------------------------------------------- */
         function renderCityCanvas() {
             ctx.clearRect(0, 0, cityCanvas.width, cityCanvas.height);
 
-            // Ground Background Plane
+            // 1. Ground Plane (Dark slate background)
             renderGroundPlane();
 
-            // Roads and Asphalt Textures
+            // 2. Asphalt, Curbs, Verges, Crosswalks, Illuminated Stop-Bars, Ground Night Pools
             renderRoadsAndMarkings();
 
-            // Buildings with 3D Extrusions, Shaded Facades, Mechanicals, and Helipads
-            renderBuildingsAndLandmarks();
+            // 3. Build Unified Depth-Sorted Render Queue
+            const renderQueue = [];
 
-            // Facilities (Police, Hospital, Fire Station)
-            renderFacilities();
+            // A. Buildings & Parks
+            for (const b of BUILDINGS) {
+                if (b.type === "park") {
+                    renderPark(b);
+                    for (const pt of PARK_TREES) {
+                        const sc = worldToScreen(pt.x, pt.y, 0);
+                        renderQueue.push({ depth: sc.depth, render: () => draw25DTree(pt.x, pt.y) });
+                    }
+                } else {
+                    const sc = worldToScreen(b.x + b.w / 2, b.y + b.h / 2, 0);
+                    renderQueue.push({ depth: sc.depth, render: () => render25DBuilding(b) });
+                }
+            }
 
-            // 24 Working Physical Traffic Lights (4 Approaches x 6 Intersections)
-            render24PhysicalTrafficSignals();
+            // B. Facilities (Police Station, Hospital, Fire Station)
+            for (const f of Object.values(FACILITIES)) {
+                const sc = worldToScreen(f.x + (f.w || 65) / 2, f.y + (f.h || 55) / 2, 0);
+                renderQueue.push({ depth: sc.depth, render: () => renderFacility(f) });
+            }
 
-            // Vehicles (Police Cruisers, Ambulances, Regular Traffic)
-            renderVehicles();
+            // C. Sidewalk Trees
+            for (const t of SIDEWALK_TREES) {
+                const sc = worldToScreen(t.x, t.y, 0);
+                renderQueue.push({ depth: sc.depth, render: () => draw25DTree(t.x, t.y) });
+            }
 
-            // Incident Scenes (Crashed cars, hazard perimeter, smoke particles)
-            renderIncidents();
+            // D. Streetlamps
+            for (const lamp of STREETLAMPS) {
+                const sc = worldToScreen(lamp.x, lamp.y, 0);
+                renderQueue.push({ depth: sc.depth, render: () => drawStreetlamp(lamp.x, lamp.y, lamp.armDir) });
+            }
 
-            // Particles (Sirens, smoke, flares)
-            renderParticles();
+            // E. 24 Working Traffic Signal Heads with Depth Sorting
+            for (const [id, junc] of Object.entries(INTERSECTIONS)) {
+                const state = junctionStates[id];
+                let colNS = "red", colEW = "red";
+                if (state.isAmber) {
+                    if (state.phase === 0) colNS = "amber";
+                    else colEW = "amber";
+                } else if (state.phase === 0) {
+                    colNS = "green";
+                } else {
+                    colEW = "green";
+                }
 
-            // Render Radar Mini-Map
+                const heads = [
+                    { x: junc.x - 42, y: junc.y - 50, col: colNS, dir: "N" },
+                    { x: junc.x + 42, y: junc.y + 50, col: colNS, dir: "S" },
+                    { x: junc.x + 50, y: junc.y - 42, col: colEW, dir: "E" },
+                    { x: junc.x - 50, y: junc.y + 42, col: colEW, dir: "W" }
+                ];
+                for (const h of heads) {
+                    const sc = worldToScreen(h.x, h.y, 0);
+                    renderQueue.push({ depth: sc.depth, render: () => drawPhysical3LensSignalHead(h.x, h.y, h.col, h.dir) });
+                }
+
+                const jc = worldToScreen(junc.x, junc.y, 0);
+                const isSelected = (id === selectedJunctionId);
+                renderQueue.push({ depth: jc.depth + 0.1, render: () => drawJunctionBadge(id, junc, isSelected) });
+            }
+
+            // F. 3D Vehicles (Sedans, SUVs, Vans, Buses, Police Cruisers, Ambulances)
+            for (const v of vehicles) {
+                const sc = worldToScreen(v.x, v.y, 0);
+                renderQueue.push({ depth: sc.depth, render: () => renderTrue3DVehicle(v) });
+            }
+
+            // G. Active Incidents (Wreckage & hazard markers)
+            for (const inc of activeIncidents) {
+                const sc = worldToScreen(inc.x, inc.y, 0);
+                renderQueue.push({ depth: sc.depth, render: () => renderIncidentScene(inc) });
+            }
+
+            // H. Active Particles (Smoke, embers, sirens)
+            for (const p of particles) {
+                const sc = worldToScreen(p.x, p.y, p.z || 0);
+                renderQueue.push({ depth: sc.depth, render: () => renderParticleItem(p) });
+            }
+
+            // 4. Sort Queue by Depth (Back-to-Front Painter's Algorithm)
+            renderQueue.sort((a, b) => a.depth - b.depth);
+
+            // 5. Draw All Depth-Sorted Entities
+            for (let i = 0; i < renderQueue.length; i++) {
+                renderQueue[i].render();
+            }
+
+            // 6. Skeuomorphic Radar Mini-Map
             renderMiniMap();
         }
 
@@ -2686,13 +3095,13 @@
         }
 
         /* -------------------------------------------------------------------------
-           ASPHALT, ROADS & PAVEMENT MARKINGS (SKEUOMORPHISM)
+           ASPHALT ROADS, CURBS, VERGES, MARKINGS & ILLUMINATED STOP-BARS
            ------------------------------------------------------------------------- */
         function renderRoadsAndMarkings() {
             const roadWidth = 76;
             const pad = 80;
 
-            // Draw roads using worldToScreen quads (extended into buffer)
+            // 1. Asphalt Road Surfaces
             ctx.fillStyle = isNightMode ? "#161b26" : "#475569";
 
             // Horizontal Arterials: Y = 220, Y = 560
@@ -2705,25 +3114,41 @@
                 drawRoadQuad(x - roadWidth / 2, -pad, roadWidth, CITY_HEIGHT + pad * 2, false);
             }
 
-            // Pavement Markings: Double Solid Yellow Centerlines
-            ctx.strokeStyle = "#eab308";
-            ctx.lineWidth = 1.5;
+            // 2. Sidewalk Curbs & Verge Boundaries
+            ctx.strokeStyle = isNightMode ? "#334155" : "#94a3b8";
+            ctx.lineWidth = 2.4 * camera.zoom;
 
-            // Horizontal Yellow Centerlines
+            for (const y of [220 - 38, 220 + 38, 560 - 38, 560 + 38]) {
+                drawWorldLineSegmented(-pad, y, CITY_WIDTH + pad, y, [
+                    { start: 220 - 48, end: 220 + 48 },
+                    { start: 550 - 48, end: 550 + 48 },
+                    { start: 880 - 48, end: 880 + 48 }
+                ], true);
+            }
+
+            for (const x of [220 - 38, 220 + 38, 550 - 38, 550 + 38, 880 - 38, 880 + 38]) {
+                drawWorldLineSegmented(x, -pad, x, CITY_HEIGHT + pad, [
+                    { start: 220 - 48, end: 220 + 48 },
+                    { start: 560 - 48, end: 560 + 48 }
+                ], false);
+            }
+
+            // 3. Double Solid Yellow Centerlines
+            ctx.strokeStyle = "#eab308";
+            ctx.lineWidth = 1.6 * camera.zoom;
+
             for (const y of [220, 560]) {
                 drawWorldLine(-pad, y - 1.5, CITY_WIDTH + pad, y - 1.5);
                 drawWorldLine(-pad, y + 1.5, CITY_WIDTH + pad, y + 1.5);
             }
-
-            // Vertical Yellow Centerlines
             for (const x of [220, 550, 880]) {
                 drawWorldLine(x - 1.5, -pad, x - 1.5, CITY_HEIGHT + pad);
                 drawWorldLine(x + 1.5, -pad, x + 1.5, CITY_HEIGHT + pad);
             }
 
-            // Dashed White Lane Dividers
+            // 4. Dashed White Lane Dividers
             ctx.strokeStyle = "rgba(255, 255, 255, 0.75)";
-            ctx.lineWidth = 1.2;
+            ctx.lineWidth = 1.2 * camera.zoom;
             for (const y of [220 - 18, 220 + 18, 560 - 18, 560 + 18]) {
                 drawDashedWorldLine(-pad, y, CITY_WIDTH + pad, y, 10, 8);
             }
@@ -2731,16 +3156,91 @@
                 drawDashedWorldLine(x, -pad, x, CITY_HEIGHT + pad, 10, 8);
             }
 
-            // Zebra Crosswalks at all 6 Intersections (4 Approaches per intersection = 24 crosswalks)
+            // 5. Zebra Crosswalks & Manholes at all 6 Intersections
             for (const junc of Object.values(INTERSECTIONS)) {
                 drawZebraCrosswalk(junc.x, junc.y - 48, 70, 10, true);  // North
                 drawZebraCrosswalk(junc.x, junc.y + 48, 70, 10, true);  // South
                 drawZebraCrosswalk(junc.x - 48, junc.y, 10, 70, false); // West
                 drawZebraCrosswalk(junc.x + 48, junc.y, 10, 70, false); // East
 
-                // Skeuomorphic Cast-Iron Manhole Cover near corner
                 drawManholeCover(junc.x + 28, junc.y - 28);
             }
+
+            // 6. Illuminated Dynamic Approach Stop-Bars (24 Stop-Bars with Real-Time Signal Glow)
+            for (const [id, junc] of Object.entries(INTERSECTIONS)) {
+                const state = junctionStates[id];
+                let colNS = "red", colEW = "red";
+                if (state.isAmber) {
+                    if (state.phase === 0) colNS = "amber";
+                    else colEW = "amber";
+                } else if (state.phase === 0) {
+                    colNS = "green";
+                } else {
+                    colEW = "green";
+                }
+
+                drawIlluminatedStopBar(junc.x - 36, junc.y - 36, junc.x - 2, junc.y - 36, colNS); // North
+                drawIlluminatedStopBar(junc.x + 2, junc.y + 36, junc.x + 36, junc.y + 36, colNS);  // South
+                drawIlluminatedStopBar(junc.x + 36, junc.y - 36, junc.x + 36, junc.y - 2, colEW);  // East
+                drawIlluminatedStopBar(junc.x - 36, junc.y + 2, junc.x - 36, junc.y + 36, colEW);  // West
+            }
+
+            // 7. Streetlamp Ground Light Pools (Warm asphalt glow at night)
+            if (isNightMode) {
+                for (const lamp of STREETLAMPS) {
+                    let rx = lamp.x, ry = lamp.y;
+                    if (lamp.armDir === "S") ry += 20;
+                    else if (lamp.armDir === "N") ry -= 20;
+                    else if (lamp.armDir === "E") rx += 20;
+                    else if (lamp.armDir === "W") rx -= 20;
+
+                    const sp = worldToScreen(rx, ry, 0);
+                    const grad = ctx.createRadialGradient(sp.x, sp.y, 2, sp.x, sp.y, 38 * camera.zoom);
+                    grad.addColorStop(0, "rgba(254, 240, 138, 0.30)");
+                    grad.addColorStop(0.5, "rgba(254, 240, 138, 0.12)");
+                    grad.addColorStop(1, "rgba(254, 240, 138, 0)");
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(sp.x, sp.y, 38 * camera.zoom, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+
+        function drawIlluminatedStopBar(x1, y1, x2, y2, color) {
+            const p1 = worldToScreen(x1, y1, 0);
+            const p2 = worldToScreen(x2, y2, 0);
+
+            ctx.save();
+            let strokeCol, glowCol;
+            if (color === "red") {
+                strokeCol = "#ef4444"; glowCol = "rgba(239, 68, 68, 0.75)";
+            } else if (color === "amber") {
+                strokeCol = "#f59e0b"; glowCol = "rgba(245, 158, 11, 0.75)";
+            } else {
+                strokeCol = "#10b981"; glowCol = "rgba(16, 185, 129, 0.75)";
+            }
+
+            // Radiant asphalt bloom blur
+            ctx.strokeStyle = strokeCol;
+            ctx.lineWidth = 4.2 * camera.zoom;
+            ctx.lineCap = "round";
+            ctx.shadowColor = glowCol;
+            ctx.shadowBlur = 10 * camera.zoom;
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+
+            // Core highlight line
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+            ctx.lineWidth = 1.4 * camera.zoom;
+            ctx.shadowBlur = 0;
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+            ctx.restore();
         }
 
         function drawRoadQuad(wx, wy, w, h, isHoriz) {
@@ -2756,11 +3256,6 @@
             ctx.lineTo(p3.x, p3.y);
             ctx.closePath();
             ctx.fill();
-
-            // Concrete Curb Highlight on Edge
-            ctx.strokeStyle = isNightMode ? "#253043" : "#94a3b8";
-            ctx.lineWidth = 1;
-            ctx.stroke();
         }
 
         function drawWorldLine(x1, y1, x2, y2) {
@@ -2772,6 +3267,32 @@
             ctx.stroke();
         }
 
+        function drawWorldLineSegmented(x1, y1, x2, y2, breaks, isHoriz) {
+            if (isHoriz) {
+                let curX = x1;
+                for (const b of breaks) {
+                    if (b.start > curX) {
+                        drawWorldLine(curX, y1, b.start, y1);
+                    }
+                    curX = Math.max(curX, b.end);
+                }
+                if (curX < x2) {
+                    drawWorldLine(curX, y1, x2, y1);
+                }
+            } else {
+                let curY = y1;
+                for (const b of breaks) {
+                    if (b.start > curY) {
+                        drawWorldLine(x1, curY, x1, b.start);
+                    }
+                    curY = Math.max(curY, b.end);
+                }
+                if (curY < y2) {
+                    drawWorldLine(x1, curY, x1, y2);
+                }
+            }
+        }
+
         function drawDashedWorldLine(x1, y1, x2, y2, dashLen, gapLen) {
             const totalDist = Math.hypot(x2 - x1, y2 - y1);
             const steps = Math.floor(totalDist / (dashLen + gapLen));
@@ -2779,64 +3300,45 @@
             const dy = (y2 - y1) / totalDist;
 
             for (let i = 0; i < steps; i++) {
-                const startDist = i * (dashLen + gapLen);
-                const endDist = startDist + dashLen;
-                const p1 = worldToScreen(x1 + dx * startDist, y1 + dy * startDist, 0);
-                const p2 = worldToScreen(x1 + dx * endDist, y1 + dy * endDist, 0);
-                ctx.beginPath();
-                ctx.moveTo(p1.x, p1.y);
-                ctx.lineTo(p2.x, p2.y);
-                ctx.stroke();
+                const startD = i * (dashLen + gapLen);
+                const endD = startD + dashLen;
+                drawWorldLine(x1 + dx * startD, y1 + dy * startD, x1 + dx * endD, y1 + dy * endD);
             }
         }
 
         function drawZebraCrosswalk(cx, cy, w, h, isHoriz) {
-            ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
             const stripes = 6;
+            ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
             if (isHoriz) {
-                const sw = w / (stripes * 2);
+                const sw = (w - 4) / stripes;
                 for (let i = 0; i < stripes; i++) {
-                    const sx = cx - w / 2 + i * sw * 2;
-                    drawRoadQuad(sx, cy - h / 2, sw, h, true);
+                    const sx = cx - w / 2 + 2 + i * sw;
+                    drawRoadQuad(sx + 1, cy - h / 2, sw - 3, h, true);
                 }
             } else {
-                const sh = h / (stripes * 2);
+                const sh = (h - 4) / stripes;
                 for (let i = 0; i < stripes; i++) {
-                    const sy = cy - h / 2 + i * sh * 2;
-                    drawRoadQuad(cx - w / 2, sy, w, sh, false);
+                    const sy = cy - h / 2 + 2 + i * sh;
+                    drawRoadQuad(cx - w / 2, sy + 1, w, sh - 3, false);
                 }
             }
         }
 
         function drawManholeCover(wx, wy) {
-            const p = worldToScreen(wx, wy, 0);
-            const r = 5 * camera.zoom;
+            const c = worldToScreen(wx, wy, 0);
             ctx.fillStyle = "#334155";
             ctx.beginPath();
-            ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+            ctx.arc(c.x, c.y, 4 * camera.zoom, 0, Math.PI * 2);
             ctx.fill();
-            ctx.strokeStyle = "#475569";
+            ctx.strokeStyle = "#1e293b";
             ctx.lineWidth = 1;
             ctx.stroke();
         }
 
         /* -------------------------------------------------------------------------
-           2.5D BUILDINGS, SHADED FACADES, MECHANICALS & HELIPADS
+           2.5D BUILDINGS, GLASS FACADES, SPINNING HVAC & AVIATION BEACONS
            ------------------------------------------------------------------------- */
-        function renderBuildingsAndLandmarks() {
-            // Painter's depth sorting: render back-to-front
-            const sorted = BUILDINGS.slice().sort((a, b) => (a.x + a.y) - (b.x + b.y));
-            for (const b of sorted) {
-                if (b.type === "park") {
-                    renderPark(b);
-                } else {
-                    render25DBuilding(b);
-                }
-            }
-        }
-
         function renderPark(b) {
-            // Ground Lawn
             const p0 = worldToScreen(b.x, b.y, 0);
             const p1 = worldToScreen(b.x + b.w, b.y, 0);
             const p2 = worldToScreen(b.x + b.w, b.y + b.h, 0);
@@ -2851,170 +3353,265 @@
             ctx.closePath();
             ctx.fill();
 
-            // Park Fountain with Animated Concentric Water Wave Ripples
+            // Park Fountain with Animated Concentric Water Ripples
             const fc = worldToScreen(b.x + b.w / 2, b.y + b.h / 2, 0);
             ctx.fillStyle = isNightMode ? "#0284c7" : "#38bdf8";
             ctx.beginPath();
             ctx.arc(fc.x, fc.y, 18 * camera.zoom, 0, Math.PI * 2);
             ctx.fill();
 
-            // Fountain water ripples
             const rippleR = ((Date.now() / 30) % 18) * camera.zoom;
             ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
             ctx.lineWidth = 1.2;
             ctx.beginPath();
             ctx.arc(fc.x, fc.y, rippleR, 0, Math.PI * 2);
             ctx.stroke();
-
-            // 2.5D Trees casting soft drop shadows
-            draw25DTree(b.x + 35, b.y + 40);
-            draw25DTree(b.x + b.w - 35, b.y + 40);
-            draw25DTree(b.x + 35, b.y + b.h - 40);
-            draw25DTree(b.x + b.w - 35, b.y + b.h - 40);
-            draw25DTree(b.x + b.w / 2, b.y + 35);
         }
 
         function draw25DTree(wx, wy) {
             const base = worldToScreen(wx, wy, 0);
             const top = worldToScreen(wx, wy, 16);
 
-            // Soft Drop Shadow
-            ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+            // Soft Ambient Drop Shadow on Ground
+            ctx.fillStyle = isNightMode ? "rgba(0, 0, 0, 0.40)" : "rgba(0, 0, 0, 0.20)";
             ctx.beginPath();
-            ctx.ellipse(base.x + 3 * camera.zoom, base.y + 2 * camera.zoom, 10 * camera.zoom, 5 * camera.zoom, 0, 0, Math.PI * 2);
+            ctx.ellipse(base.x + 2 * camera.zoom, base.y + 2 * camera.zoom, 9 * camera.zoom, 5 * camera.zoom, 0, 0, Math.PI * 2);
             ctx.fill();
 
             // Wooden Trunk
             ctx.strokeStyle = "#78350f";
-            ctx.lineWidth = 2.5 * camera.zoom;
+            ctx.lineWidth = 2.4 * camera.zoom;
             ctx.beginPath();
             ctx.moveTo(base.x, base.y);
             ctx.lineTo(top.x, top.y);
             ctx.stroke();
 
-            // 3D Spherical Foliage Canopy
+            // 3D Spherical Foliage Canopy with Ambient & Sun Lighting
+            const canopyR = 12 * camera.zoom;
             ctx.fillStyle = isNightMode ? "#047857" : "#16a34a";
             ctx.beginPath();
-            ctx.arc(top.x, top.y, 11 * camera.zoom, 0, Math.PI * 2);
+            ctx.arc(top.x, top.y, canopyR, 0, Math.PI * 2);
             ctx.fill();
 
-            // Foliage Sun Highlight
-            ctx.fillStyle = isNightMode ? "#10b981" : "#4ade80";
+            // Secondary Canopy Layer (Sunlit upper dome)
+            ctx.fillStyle = isNightMode ? "#065f46" : "#22c55e";
             ctx.beginPath();
-            ctx.arc(top.x - 3 * camera.zoom, top.y - 3 * camera.zoom, 6 * camera.zoom, 0, Math.PI * 2);
+            ctx.arc(top.x - 3 * camera.zoom, top.y - 4 * camera.zoom, canopyR * 0.75, 0, Math.PI * 2);
             ctx.fill();
+
+            // Sunlight glint highlight
+            ctx.fillStyle = isNightMode ? "#10b981" : "#86efac";
+            ctx.beginPath();
+            ctx.arc(top.x - 5 * camera.zoom, top.y - 6 * camera.zoom, canopyR * 0.35, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawStreetlamp(wx, wy, armDir) {
+            const base = worldToScreen(wx, wy, 0);
+            const top = worldToScreen(wx, wy, 24);
+
+            // 1. Steel Mast Pole
+            ctx.strokeStyle = "#64748b";
+            ctx.lineWidth = 2.0 * camera.zoom;
+            ctx.beginPath();
+            ctx.moveTo(base.x, base.y);
+            ctx.lineTo(top.x, top.y);
+            ctx.stroke();
+
+            // Base plate
+            ctx.fillStyle = "#334155";
+            ctx.beginPath();
+            ctx.arc(base.x, base.y, 2.5 * camera.zoom, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 2. Curved Mast Arm
+            let offX = 0, offY = 0;
+            if (armDir === "S") offY = 12;
+            else if (armDir === "N") offY = -12;
+            else if (armDir === "E") offX = 12;
+            else if (armDir === "W") offX = -12;
+
+            const armTip = worldToScreen(wx + offX, wy + offY, 23);
+            ctx.strokeStyle = "#64748b";
+            ctx.lineWidth = 1.6 * camera.zoom;
+            ctx.beginPath();
+            ctx.moveTo(top.x, top.y);
+            ctx.quadraticCurveTo(top.x, top.y - 4 * camera.zoom, armTip.x, armTip.y);
+            ctx.stroke();
+
+            // 3. Luminaire Fixture Head
+            ctx.fillStyle = "#1e293b";
+            ctx.beginPath();
+            ctx.arc(armTip.x, armTip.y, 3.2 * camera.zoom, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 4. Optical Lens Glow at Night
+            if (isNightMode) {
+                ctx.fillStyle = "#fef08a";
+                ctx.shadowColor = "#fef08a";
+                ctx.shadowBlur = 8 * camera.zoom;
+                ctx.beginPath();
+                ctx.arc(armTip.x, armTip.y, 2.0 * camera.zoom, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            } else {
+                ctx.fillStyle = "#e2e8f0";
+                ctx.beginPath();
+                ctx.arc(armTip.x, armTip.y, 1.8 * camera.zoom, 0, Math.PI * 2);
+                ctx.fill();
+            }
         }
 
         function render25DBuilding(b) {
             const H = b.height;
 
             // 1. Soft Drop Shadow on Ground
-            const s0 = worldToScreen(b.x + 10, b.y + 10, 0);
-            const s1 = worldToScreen(b.x + b.w + 10, b.y + 10, 0);
-            const s2 = worldToScreen(b.x + b.w + 10, b.y + b.h + 10, 0);
-            const s3 = worldToScreen(b.x + 10, b.y + b.h + 10, 0);
+            const s0 = worldToScreen(b.x + 8, b.y + 8, 0);
+            const s1 = worldToScreen(b.x + b.w + 8, b.y + 8, 0);
+            const s2 = worldToScreen(b.x + b.w + 8, b.y + b.h + 8, 0);
+            const s3 = worldToScreen(b.x + 8, b.y + b.h + 8, 0);
 
-            ctx.fillStyle = isNightMode ? "rgba(0, 0, 0, 0.45)" : "rgba(0, 0, 0, 0.15)";
+            ctx.fillStyle = isNightMode ? "rgba(0, 0, 0, 0.42)" : "rgba(0, 0, 0, 0.16)";
             ctx.beginPath();
-            ctx.moveTo(s0.x, s0.y);
-            ctx.lineTo(s1.x, s1.y);
-            ctx.lineTo(s2.x, s2.y);
-            ctx.lineTo(s3.x, s3.y);
+            ctx.moveTo(s0.x, s0.y); ctx.lineTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.lineTo(s3.x, s3.y);
             ctx.closePath();
             ctx.fill();
 
-            // Ground base corners
-            const b0 = worldToScreen(b.x, b.y, 0);
-            const b1 = worldToScreen(b.x + b.w, b.y, 0);
-            const b2 = worldToScreen(b.x + b.w, b.y + b.h, 0);
-            const b3 = worldToScreen(b.x, b.y + b.h, 0);
+            // Base ground corners
+            const c0 = worldToScreen(b.x, b.y, 0);
+            const c1 = worldToScreen(b.x + b.w, b.y, 0);
+            const c2 = worldToScreen(b.x + b.w, b.y + b.h, 0);
+            const c3 = worldToScreen(b.x, b.y + b.h, 0);
 
-            // Roof corners at height H
+            // Roof corners
             const r0 = worldToScreen(b.x, b.y, H);
             const r1 = worldToScreen(b.x + b.w, b.y, H);
             const r2 = worldToScreen(b.x + b.w, b.y + b.h, H);
             const r3 = worldToScreen(b.x, b.y + b.h, H);
 
-            // 2. Shaded South-West Vertical Wall Facade
-            ctx.fillStyle = isNightMode ? "#1a2436" : "#94a3b8";
-            ctx.beginPath();
-            ctx.moveTo(b3.x, b3.y);
-            ctx.lineTo(b2.x, b2.y);
-            ctx.lineTo(r2.x, r2.y);
-            ctx.lineTo(r3.x, r3.y);
-            ctx.closePath();
-            ctx.fill();
-            ctx.strokeStyle = isNightMode ? "#2a374d" : "#64748b";
-            ctx.lineWidth = 1;
-            ctx.stroke();
+            // 4 Vertical Walls with Back-Face Culling
+            const walls = [
+                { id: "S", p0: c3, p1: c2, p2: r2, p3: r3, colNight: "#1a2538", colDay: "#94a3b8" },
+                { id: "E", p0: c2, p1: c1, p2: r1, p3: r2, colNight: "#111827", colDay: "#64748b" },
+                { id: "N", p0: c1, p1: c0, p2: r0, p3: r1, colNight: "#0e1420", colDay: "#475569" },
+                { id: "W", p0: c0, p1: c3, p2: r3, p3: r0, colNight: "#151e2e", colDay: "#7b8ba1" }
+            ];
 
-            // 3. Shaded South-East Vertical Wall Facade (Deeper Shadow)
-            ctx.fillStyle = isNightMode ? "#111827" : "#64748b";
-            ctx.beginPath();
-            ctx.moveTo(b2.x, b2.y);
-            ctx.lineTo(b1.x, b1.y);
-            ctx.lineTo(r1.x, r1.y);
-            ctx.lineTo(r2.x, r2.y);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
+            for (const w of walls) {
+                if (isPolyFrontFacing(w.p0, w.p1, w.p2)) {
+                    draw3DPoly([w.p0, w.p1, w.p2, w.p3], isNightMode ? w.colNight : w.colDay, isNightMode ? "#2a374d" : "#475569", 1);
 
-            // Windows grid detailing on vertical facades
-            if (isNightMode) {
-                ctx.fillStyle = "rgba(253, 224, 71, 0.4)"; // Warm lit window glow
-                const winRows = Math.floor(H / 12);
-                for (let rw = 1; rw < winRows; rw++) {
-                    const frac = rw / winRows;
-                    const wx1 = r3.x + (b3.x - r3.x) * frac;
-                    const wy1 = r3.y + (b3.y - r3.y) * frac;
-                    const wx2 = r2.x + (b2.x - r2.x) * frac;
-                    const wy2 = r2.y + (b2.y - r2.y) * frac;
-                    ctx.fillRect((wx1 + wx2) / 2, (wy1 + wy2) / 2, 4 * camera.zoom, 2.5 * camera.zoom);
+                    // Glass Curtain Wall Facade with Window Lattice
+                    const winRows = Math.max(2, Math.floor(H / 14));
+                    for (let rw = 1; rw < winRows; rw++) {
+                        const frac = rw / winRows;
+                        const sx1 = w.p3.x + (w.p0.x - w.p3.x) * frac;
+                        const sy1 = w.p3.y + (w.p0.y - w.p3.y) * frac;
+                        const sx2 = w.p2.x + (w.p1.x - w.p2.x) * frac;
+                        const sy2 = w.p2.y + (w.p1.y - w.p2.y) * frac;
+                        ctx.strokeStyle = isNightMode ? "rgba(56, 189, 248, 0.18)" : "rgba(255, 255, 255, 0.25)";
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(sx1, sy1);
+                        ctx.lineTo(sx2, sy2);
+                        ctx.stroke();
+
+                        if (isNightMode) {
+                            for (let col = 1; col <= 4; col++) {
+                                const cFrac = col / 5;
+                                const px = sx1 + (sx2 - sx1) * cFrac;
+                                const py = sy1 + (sy2 - sy1) * cFrac;
+                                const rand = ((rw * 7 + col * 13 + b.x) % 10) / 10;
+                                if (rand > 0.4) {
+                                    ctx.fillStyle = rand > 0.8 ? "rgba(56, 189, 248, 0.45)" : "rgba(253, 224, 71, 0.55)";
+                                    ctx.fillRect(px - 2 * camera.zoom, py - 1.5 * camera.zoom, 4 * camera.zoom, 3 * camera.zoom);
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
-            // 4. Building Roof Slab
-            ctx.fillStyle = isNightMode ? b.roof : "#e2e8f0";
+            // Roof Slab
+            draw3DPoly([r0, r1, r2, r3], isNightMode ? b.roof : "#cbd5e1", isNightMode ? "#475569" : "#ffffff", 1.5);
+
+            // Rooftop HVAC Unit with Spinning Fan
+            const hvacX = b.x + b.w * 0.35;
+            const hvacY = b.y + b.h * 0.35;
+            const hvacW = 22, hvacH = 16, hvacZ = 8;
+            const h0 = worldToScreen(hvacX, hvacY, H);
+            const h1 = worldToScreen(hvacX + hvacW, hvacY, H);
+            const h2 = worldToScreen(hvacX + hvacW, hvacY + hvacH, H);
+            const h3 = worldToScreen(hvacX, hvacY + hvacH, H);
+            const t0 = worldToScreen(hvacX, hvacY, H + hvacZ);
+            const t1 = worldToScreen(hvacX + hvacW, hvacY, H + hvacZ);
+            const t2 = worldToScreen(hvacX + hvacW, hvacY + hvacH, H + hvacZ);
+            const t3 = worldToScreen(hvacX, hvacY + hvacH, H + hvacZ);
+
+            if (isPolyFrontFacing(h3, h2, t2)) draw3DPoly([h3, h2, t2, t3], isNightMode ? "#334155" : "#64748b");
+            if (isPolyFrontFacing(h2, h1, t1)) draw3DPoly([h2, h1, t1, t2], isNightMode ? "#1e293b" : "#475569");
+            if (isPolyFrontFacing(h1, h0, t0)) draw3DPoly([h1, h0, t0, t1], isNightMode ? "#1e293b" : "#475569");
+            if (isPolyFrontFacing(h0, h3, t3)) draw3DPoly([h0, h3, t3, t0], isNightMode ? "#334155" : "#64748b");
+            draw3DPoly([t0, t1, t2, t3], isNightMode ? "#475569" : "#94a3b8", "#1e293b", 1);
+
+            // Spinning Exhaust Fan on HVAC Roof
+            const fanCenter = worldToScreen(hvacX + hvacW / 2, hvacY + hvacH / 2, H + hvacZ);
+            const fanR = 5 * camera.zoom;
+            ctx.fillStyle = "#090d16";
             ctx.beginPath();
-            ctx.moveTo(r0.x, r0.y);
-            ctx.lineTo(r1.x, r1.y);
-            ctx.lineTo(r2.x, r2.y);
-            ctx.lineTo(r3.x, r3.y);
-            ctx.closePath();
+            ctx.arc(fanCenter.x, fanCenter.y, fanR, 0, Math.PI * 2);
             ctx.fill();
-            ctx.strokeStyle = isNightMode ? "#475569" : "#cbd5e1";
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-
-            // 5. Rooftop Mechanicals (HVAC units, elevator penthouses, antennas)
-            const rc = worldToScreen(b.x + b.w / 2, b.y + b.h / 2, H);
-            ctx.fillStyle = isNightMode ? "#334155" : "#94a3b8";
-            ctx.fillRect(rc.x - 8 * camera.zoom, rc.y - 6 * camera.zoom, 16 * camera.zoom, 12 * camera.zoom);
-
-            // Communication Antenna with Blinking Red Aviation Beacon
-            const antTop = worldToScreen(b.x + 15, b.y + 15, H + 25);
-            const antBase = worldToScreen(b.x + 15, b.y + 15, H);
             ctx.strokeStyle = "#94a3b8";
-            ctx.lineWidth = 1.2;
-            ctx.beginPath();
-            ctx.moveTo(antBase.x, antBase.y);
-            ctx.lineTo(antTop.x, antTop.y);
+            ctx.lineWidth = 1;
             ctx.stroke();
 
-            // Blinking red aviation warning light
-            const isBeaconLit = (Date.now() % 1000 < 500);
-            if (isBeaconLit) {
-                ctx.fillStyle = "#ef4444";
-                ctx.shadowColor = "#ef4444";
-                ctx.shadowBlur = 8;
+            const fanAngle = (Date.now() / 25) % (Math.PI * 2);
+            const pitchRad = (camera.pitch * Math.PI) / 180;
+            ctx.strokeStyle = "#e2e8f0";
+            ctx.lineWidth = 1.6 * camera.zoom;
+            ctx.beginPath();
+            for (let blade = 0; blade < 3; blade++) {
+                const a = fanAngle + (blade * Math.PI * 2 / 3);
+                ctx.moveTo(fanCenter.x, fanCenter.y);
+                ctx.lineTo(fanCenter.x + Math.cos(a) * (fanR - 1), fanCenter.y + Math.sin(a) * (fanR - 1) * Math.sin(pitchRad));
+            }
+            ctx.stroke();
+
+            // Communication Radio Tower with Blinking Aviation Obstacle Strobe
+            if (H >= 70) {
+                const mastBase = worldToScreen(b.x + b.w * 0.7, b.y + b.h * 0.7, H);
+                const mastTip = worldToScreen(b.x + b.w * 0.7, b.y + b.h * 0.7, H + 30);
+                ctx.strokeStyle = "#94a3b8";
+                ctx.lineWidth = 1.5 * camera.zoom;
                 ctx.beginPath();
-                ctx.arc(antTop.x, antTop.y, 2.5 * camera.zoom, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.shadowBlur = 0;
+                ctx.moveTo(mastBase.x, mastBase.y);
+                ctx.lineTo(mastTip.x, mastTip.y);
+                ctx.stroke();
+
+                const midA = worldToScreen(b.x + b.w * 0.7, b.y + b.h * 0.7, H + 10);
+                const midB = worldToScreen(b.x + b.w * 0.7, b.y + b.h * 0.7, H + 20);
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(midA.x - 3 * camera.zoom, midA.y); ctx.lineTo(midA.x + 3 * camera.zoom, midA.y);
+                ctx.moveTo(midB.x - 2 * camera.zoom, midB.y); ctx.lineTo(midB.x + 2 * camera.zoom, midB.y);
+                ctx.stroke();
+
+                const cycle = Date.now() % 1500;
+                const isBeaconLit = (cycle < 120 || (cycle > 220 && cycle < 340));
+                if (isBeaconLit) {
+                    ctx.fillStyle = "#ef4444";
+                    ctx.shadowColor = "#ef4444";
+                    ctx.shadowBlur = 12 * camera.zoom;
+                    ctx.beginPath();
+                    ctx.arc(mastTip.x, mastTip.y, 3 * camera.zoom, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                }
             }
 
-            // 6. Rooftop Helipads (Metro Trauma Center & Plaza Tower)
+            // Helipad
             if (b.hasHelipad) {
+                const rc = worldToScreen(b.x + b.w / 2, b.y + b.h / 2, H);
                 ctx.strokeStyle = "#facc15";
                 ctx.lineWidth = 2 * camera.zoom;
                 ctx.beginPath();
@@ -3029,169 +3626,77 @@
             }
         }
 
-        function renderFacilities() {
-            const sorted = Object.values(FACILITIES).sort((a, b) => (a.x + a.y) - (b.x + b.y));
-            for (const f of sorted) {
-                const H = f.height || 40;
-                const w = f.w || 65;
-                const h = f.h || 55;
-                const fx = f.x;
-                const fy = f.y;
+        function renderFacility(f) {
+            const H = f.height || 40;
+            const w = f.w || 65;
+            const h = f.h || 55;
+            const fx = f.x;
+            const fy = f.y;
 
-                // Base corners on ground
-                const b0 = worldToScreen(fx, fy, 0);
-                const b1 = worldToScreen(fx + w, fy, 0);
-                const b2 = worldToScreen(fx + w, fy + h, 0);
-                const b3 = worldToScreen(fx, fy + h, 0);
+            // Ground drop shadow
+            const s0 = worldToScreen(fx + 8, fy + 8, 0);
+            const s1 = worldToScreen(fx + w + 8, fy + 8, 0);
+            const s2 = worldToScreen(fx + w + 8, fy + h + 8, 0);
+            const s3 = worldToScreen(fx + 8, fy + h + 8, 0);
+            draw3DPoly([s0, s1, s2, s3], isNightMode ? "rgba(0, 0, 0, 0.4)" : "rgba(0, 0, 0, 0.16)");
 
-                // Roof corners
-                const r0 = worldToScreen(fx, fy, H);
-                const r1 = worldToScreen(fx + w, fy, H);
-                const r2 = worldToScreen(fx + w, fy + h, H);
-                const r3 = worldToScreen(fx, fy + h, H);
+            // Base ground corners
+            const c0 = worldToScreen(fx, fy, 0);
+            const c1 = worldToScreen(fx + w, fy, 0);
+            const c2 = worldToScreen(fx + w, fy + h, 0);
+            const c3 = worldToScreen(fx, fy + h, 0);
 
-                // Ground drop shadow
-                ctx.fillStyle = isNightMode ? "rgba(0, 0, 0, 0.4)" : "rgba(0, 0, 0, 0.15)";
+            // Roof corners
+            const r0 = worldToScreen(fx, fy, H);
+            const r1 = worldToScreen(fx + w, fy, H);
+            const r2 = worldToScreen(fx + w, fy + h, H);
+            const r3 = worldToScreen(fx, fy + h, H);
+
+            const baseCol = f.type === "police" ? "#1e3a8a" : (f.type === "hospital" ? "#7f1d1d" : "#7c2d12");
+            const darkCol = f.type === "police" ? "#142555" : (f.type === "hospital" ? "#501212" : "#501c0c");
+            const roofCol = f.type === "police" ? "#2563eb" : (f.type === "hospital" ? "#991b1b" : "#9a3412");
+
+            if (isPolyFrontFacing(c3, c2, r2)) draw3DPoly([c3, c2, r2, r3], baseCol, isNightMode ? "#2e4570" : "#475569", 1);
+            if (isPolyFrontFacing(c2, c1, r1)) draw3DPoly([c2, c1, r1, r2], darkCol, isNightMode ? "#1e293b" : "#334155", 1);
+            if (isPolyFrontFacing(c1, c0, r0)) draw3DPoly([c1, c0, r0, r1], darkCol, isNightMode ? "#1e293b" : "#334155", 1);
+            if (isPolyFrontFacing(c0, c3, r3)) draw3DPoly([c0, c3, r3, r0], baseCol, isNightMode ? "#2e4570" : "#475569", 1);
+
+            // Roof Slab
+            draw3DPoly([r0, r1, r2, r3], roofCol, "#ffffff", 1.2);
+
+            // Rooftop Helipad for Hospital
+            const rc = worldToScreen(fx + w / 2, fy + h / 2, H);
+            if (f.hasHelipad) {
+                ctx.strokeStyle = "#facc15";
+                ctx.lineWidth = 2 * camera.zoom;
                 ctx.beginPath();
-                const s0 = worldToScreen(fx + 8, fy + 8, 0);
-                const s1 = worldToScreen(fx + w + 8, fy + 8, 0);
-                const s2 = worldToScreen(fx + w + 8, fy + h + 8, 0);
-                const s3 = worldToScreen(fx + 8, fy + h + 8, 0);
-                ctx.moveTo(s0.x, s0.y); ctx.lineTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.lineTo(s3.x, s3.y);
-                ctx.closePath();
-                ctx.fill();
-
-                // South-West vertical facade
-                ctx.fillStyle = f.type === "police" ? "#1e3a8a" : (f.type === "hospital" ? "#7f1d1d" : "#7c2d12");
-                ctx.beginPath();
-                ctx.moveTo(b3.x, b3.y); ctx.lineTo(b2.x, b2.y); ctx.lineTo(r2.x, r2.y); ctx.lineTo(r3.x, r3.y);
-                ctx.closePath();
-                ctx.fill();
-                ctx.strokeStyle = isNightMode ? "#2e4570" : "#475569";
-                ctx.lineWidth = 1;
-                ctx.stroke();
-
-                // South-East vertical facade (shadow)
-                ctx.fillStyle = f.type === "police" ? "#142555" : (f.type === "hospital" ? "#501212" : "#501c0c");
-                ctx.beginPath();
-                ctx.moveTo(b2.x, b2.y); ctx.lineTo(b1.x, b1.y); ctx.lineTo(r1.x, r1.y); ctx.lineTo(r2.x, r2.y);
-                ctx.closePath();
-                ctx.fill();
-                ctx.stroke();
-
-                // Roof slab
-                ctx.fillStyle = f.type === "police" ? "#2563eb" : (f.type === "hospital" ? "#991b1b" : "#9a3412");
-                ctx.beginPath();
-                ctx.moveTo(r0.x, r0.y); ctx.lineTo(r1.x, r1.y); ctx.lineTo(r2.x, r2.y); ctx.lineTo(r3.x, r3.y);
-                ctx.closePath();
-                ctx.fill();
-                ctx.strokeStyle = "#ffffff";
-                ctx.lineWidth = 1.2;
-                ctx.stroke();
-
-                // Rooftop Helipad for Hospital
-                const rc = worldToScreen(fx + w / 2, fy + h / 2, H);
-                if (f.hasHelipad) {
-                    ctx.strokeStyle = "#facc15";
-                    ctx.lineWidth = 2 * camera.zoom;
-                    ctx.beginPath();
-                    ctx.arc(rc.x, rc.y, 13 * camera.zoom, 0, Math.PI * 2);
-                    ctx.stroke();
-
-                    // Perimeter lights
-                    const isLit = (Date.now() % 400 < 200);
-                    ctx.fillStyle = isLit ? "#10b981" : "#f59e0b";
-                    ctx.beginPath();
-                    ctx.arc(rc.x - 13 * camera.zoom, rc.y, 2 * camera.zoom, 0, Math.PI * 2);
-                    ctx.arc(rc.x + 13 * camera.zoom, rc.y, 2 * camera.zoom, 0, Math.PI * 2);
-                    ctx.arc(rc.x, rc.y - 13 * camera.zoom, 2 * camera.zoom, 0, Math.PI * 2);
-                    ctx.arc(rc.x, rc.y + 13 * camera.zoom, 2 * camera.zoom, 0, Math.PI * 2);
-                    ctx.fill();
-
-                    ctx.fillStyle = "#ffffff";
-                    ctx.font = `bold ${Math.round(11 * camera.zoom)}px sans-serif`;
-                    ctx.textAlign = "center";
-                    ctx.textBaseline = "middle";
-                    ctx.fillText("H", rc.x, rc.y);
-                } else {
-                    const icon = f.type === "police" ? "🚓" : (f.type === "hospital" ? "🏥" : "🚒");
-                    ctx.font = `${Math.round(13 * camera.zoom)}px sans-serif`;
-                    ctx.textAlign = "center";
-                    ctx.textBaseline = "middle";
-                    ctx.fillText(icon, rc.x, rc.y - 3 * camera.zoom);
-
-                    ctx.fillStyle = "#ffffff";
-                    ctx.font = `bold ${Math.round(7.5 * camera.zoom)}px sans-serif`;
-                    ctx.fillText(f.label, rc.x, rc.y + 8 * camera.zoom);
-                }
-            }
-        }
-
-        /* -------------------------------------------------------------------------
-           24 PHYSICAL TRAFFIC LIGHTS (4 APPROACHES PER JUNCTION x 6 JUNCTIONS)
-           Metallic Housings, Sun Visors, Radiant Lens Flares
-           ------------------------------------------------------------------------- */
-        function render24PhysicalTrafficSignals() {
-            for (const [id, junc] of Object.entries(INTERSECTIONS)) {
-                const state = junctionStates[id];
-                const isSelected = (id === selectedJunctionId);
-
-                // Highlight selected junction ring on ground
-                if (isSelected) {
-                    const jc = worldToScreen(junc.x, junc.y, 0);
-                    ctx.strokeStyle = "rgba(56, 189, 248, 0.85)";
-                    ctx.lineWidth = 2.5;
-                    ctx.beginPath();
-                    ctx.arc(jc.x, jc.y, 42 * camera.zoom, 0, Math.PI * 2);
-                    ctx.stroke();
-                }
-
-                // Determine active colors for North-South and East-West approaches
-                let colNS = "red", colEW = "red";
-                if (state.isAmber) {
-                    if (state.phase === 0) colNS = "amber";
-                    else colEW = "amber";
-                } else if (state.phase === 0) {
-                    colNS = "green";
-                } else {
-                    colEW = "green";
-                }
-
-                // Render 4 Physical Traffic Light Signal Heads
-                // Head 1: North approach (facing Southbound traffic)
-                drawPhysical3LensSignalHead(junc.x - 42, junc.y - 50, colNS, "N");
-                // Head 2: South approach (facing Northbound traffic)
-                drawPhysical3LensSignalHead(junc.x + 42, junc.y + 50, colNS, "S");
-                // Head 3: East approach (facing Westbound traffic)
-                drawPhysical3LensSignalHead(junc.x + 50, junc.y - 42, colEW, "E");
-                // Head 4: West approach (facing Eastbound traffic)
-                drawPhysical3LensSignalHead(junc.x - 50, junc.y + 42, colEW, "W");
-
-                // Junction Badge Tag
-                const jc = worldToScreen(junc.x, junc.y, 0);
-                ctx.fillStyle = isSelected ? "rgba(56, 189, 248, 0.95)" : "rgba(18, 25, 39, 0.9)";
-                ctx.strokeStyle = isSelected ? "#ffffff" : "#3b82f6";
-                ctx.lineWidth = 1.2;
-                ctx.beginPath();
-                ctx.roundRect(jc.x - 26 * camera.zoom, jc.y - 9 * camera.zoom, 52 * camera.zoom, 18 * camera.zoom, 5);
-                ctx.fill();
+                ctx.arc(rc.x, rc.y, 13 * camera.zoom, 0, Math.PI * 2);
                 ctx.stroke();
 
                 ctx.fillStyle = "#ffffff";
-                ctx.font = `bold ${Math.round(8.5 * camera.zoom)}px sans-serif`;
+                ctx.font = `bold ${Math.round(11 * camera.zoom)}px sans-serif`;
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
-                ctx.fillText(id, jc.x, jc.y);
+                ctx.fillText("H", rc.x, rc.y);
             }
+
+            // Facility Label Banner
+            ctx.fillStyle = "#ffffff";
+            ctx.font = `bold ${Math.round(7.5 * camera.zoom)}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.fillText(f.label, rc.x, rc.y + (f.hasHelipad ? 16 * camera.zoom : 0));
         }
 
+        /* -------------------------------------------------------------------------
+           DEPTH-SORTED 24 PHYSICAL TRAFFIC SIGNALS & HEADS
+           ------------------------------------------------------------------------- */
         function drawPhysical3LensSignalHead(wx, wy, activeColor, dir) {
             const basePos = worldToScreen(wx, wy, 0);
             const headPos = worldToScreen(wx, wy, 24);
 
             // 1. Vertical Steel Pole Mast
             ctx.strokeStyle = "#64748b";
-            ctx.lineWidth = 2.5 * camera.zoom;
+            ctx.lineWidth = 2.4 * camera.zoom;
             ctx.beginPath();
             ctx.moveTo(basePos.x, basePos.y);
             ctx.lineTo(headPos.x, headPos.y);
@@ -3203,7 +3708,7 @@
             ctx.arc(basePos.x, basePos.y, 3 * camera.zoom, 0, Math.PI * 2);
             ctx.fill();
 
-            // 2. Physical Metallic Signal Housing (Beveled Rectangular Box)
+            // 2. Physical Metallic Signal Housing
             const hw = 9 * camera.zoom;
             const hh = 24 * camera.zoom;
             ctx.fillStyle = "#0f172a";
@@ -3214,7 +3719,7 @@
             ctx.fill();
             ctx.stroke();
 
-            // 3. Three Physical Optical Glass Lenses with Sun Visor Hoods
+            // 3. Three Physical Optical Glass Lenses with Sun Visors
             const lensR = 2.4 * camera.zoom;
             const lY = [headPos.y - 7 * camera.zoom, headPos.y, headPos.y + 7 * camera.zoom];
             const colors = ["red", "amber", "green"];
@@ -3224,35 +3729,30 @@
                 const col = colors[i];
                 const isLit = (activeColor === col);
 
-                // Physical Sun Visor / Cowl extending over top of lens
+                // Sun Visor Hood over top of lens
                 ctx.strokeStyle = "#334155";
                 ctx.lineWidth = 1.2 * camera.zoom;
                 ctx.beginPath();
                 ctx.arc(headPos.x, cy, lensR + 1.2 * camera.zoom, Math.PI * 1.1, Math.PI * 1.9);
                 ctx.stroke();
 
-                // Lens Optical Glass
                 if (isLit) {
-                    // Brilliant Radiant Lens Flare
-                    const flareCol = col === "red" ? "#ef4444" : (col === "amber" ? "#f59e0b" : "#10b981");
-                    const coreCol = col === "red" ? "#fca5a5" : (col === "amber" ? "#fef08a" : "#86efac");
+                    const flareCol = col === "red" ? "rgba(239, 68, 68, 0.95)" : (col === "amber" ? "rgba(245, 158, 11, 0.95)" : "rgba(16, 185, 129, 0.95)");
+                    const coreCol = col === "red" ? "#ff8888" : (col === "amber" ? "#fef08a" : "#6ee7b7");
 
-                    // Asphalt Ground Reflection Flare
-                    ctx.fillStyle = col === "red" ? "rgba(239, 68, 68, 0.25)" : (col === "amber" ? "rgba(245, 158, 11, 0.22)" : "rgba(16, 185, 129, 0.25)");
+                    ctx.fillStyle = flareCol;
+                    ctx.shadowColor = flareCol;
+                    ctx.shadowBlur = 12 * camera.zoom;
                     ctx.beginPath();
-                    ctx.arc(basePos.x, basePos.y, 16 * camera.zoom, 0, Math.PI * 2);
+                    ctx.arc(headPos.x, cy, lensR * 1.4, 0, Math.PI * 2);
                     ctx.fill();
 
-                    // Hot center core
                     ctx.fillStyle = coreCol;
-                    ctx.shadowColor = flareCol;
-                    ctx.shadowBlur = 10 * camera.zoom;
                     ctx.beginPath();
                     ctx.arc(headPos.x, cy, lensR, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.shadowBlur = 0;
                 } else {
-                    // Dark unlit textured glass
                     ctx.fillStyle = col === "red" ? "#3b1414" : (col === "amber" ? "#3b260e" : "#0d2b1c");
                     ctx.beginPath();
                     ctx.arc(headPos.x, cy, lensR, 0, Math.PI * 2);
@@ -3261,69 +3761,360 @@
             }
         }
 
+        function drawJunctionBadge(id, junc, isSelected) {
+            const jc = worldToScreen(junc.x, junc.y, 0);
+            ctx.fillStyle = isSelected ? "rgba(56, 189, 248, 0.95)" : "rgba(18, 25, 39, 0.9)";
+            ctx.strokeStyle = isSelected ? "#ffffff" : "#3b82f6";
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.roundRect(jc.x - 26 * camera.zoom, jc.y - 9 * camera.zoom, 52 * camera.zoom, 18 * camera.zoom, 5);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = "#ffffff";
+            ctx.font = `bold ${Math.round(8.5 * camera.zoom)}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(id, jc.x, jc.y);
+        }
+
         /* -------------------------------------------------------------------------
-           VEHICLES RENDERING (POLICE CRUISERS, AMBULANCES & REGULAR TRAFFIC)
+           TRUE 2.5D 3D-EXTRUDED ISOMETRIC VEHICLE MODELS
+           Road-contact tires, ground shadows, shaded chassis panels & cabin extrusion
            ------------------------------------------------------------------------- */
-        function renderVehicles() {
-            for (const v of vehicles) {
-                const sc = worldToScreen(v.x, v.y, 0);
+        function renderTrue3DVehicle(v) {
+            const isBus = (v.type === "bus");
+            const isVan = (v.type === "van");
+            const isSuv = (v.type === "suv");
+            const isPolice = (v.isEmergency && v.emergencyType === "police");
+            const isAmbulance = (v.isEmergency && v.emergencyType === "ambulance");
 
-                ctx.save();
-                ctx.translate(sc.x, sc.y);
+            const L = isBus ? 36 : (isAmbulance ? 27 : (isVan ? 25 : (isSuv ? 24 : 22)));
+            const W = isBus ? 13 : (isAmbulance ? 12 : (isVan ? 11 : (isSuv ? 11 : 9.5)));
 
-                // Vehicle heading angle (guaranteed continuous, stable even at zero speed)
-                let angle = v.heading;
-                if (currentViewMode === "isometric") {
-                    const pA = worldToScreen(v.x, v.y, 0);
-                    const pB = worldToScreen(v.x + Math.cos(v.heading) * 10, v.y + Math.sin(v.heading) * 10, 0);
-                    angle = Math.atan2(pB.y - pA.y, pB.x - pA.x);
-                }
-                ctx.rotate(angle);
+            const zGround = 0;
+            const zTireTop = 2.2;
+            const zChassisBottom = 1.0;
+            const zChassisTop = isBus ? 5.2 : (isAmbulance ? 4.6 : (isVan ? 4.5 : (isSuv ? 4.2 : 3.6)));
+            const zRoof = isBus ? 11.2 : (isAmbulance ? 10.2 : (isVan ? 9.8 : (isSuv ? 8.4 : 6.8)));
 
-                const L = v.length * camera.zoom;
-                const W = v.width * camera.zoom;
+            // 1. Soft Ambient Ground Drop Shadow on Asphalt
+            const s0 = localToScreen(v, -L * 0.54, -W * 0.54, 0);
+            const s1 = localToScreen(v, L * 0.54, -W * 0.54, 0);
+            const s2 = localToScreen(v, L * 0.54, W * 0.54, 0);
+            const s3 = localToScreen(v, -L * 0.54, W * 0.54, 0);
+            draw3DPoly([s0, s1, s2, s3], isNightMode ? "rgba(0, 0, 0, 0.45)" : "rgba(0, 0, 0, 0.22)");
 
-                // Night mode headlight beams casting onto asphalt
+            // 2. Road-Contact Tires (4 wheels, 6 for bus) firmly touching asphalt at z=0
+            const tireThickness = 1.2;
+            const tireWheelbase = L * 0.32;
+            const tireTrack = W * 0.46;
+
+            const wheelPositions = [
+                { lx: tireWheelbase, ly: -tireTrack },
+                { lx: tireWheelbase, ly: tireTrack },
+                { lx: -tireWheelbase, ly: -tireTrack },
+                { lx: -tireWheelbase, ly: tireTrack }
+            ];
+            if (isBus) {
+                wheelPositions.push({ lx: 0, ly: -tireTrack });
+                wheelPositions.push({ lx: 0, ly: tireTrack });
+            }
+
+            for (const w of wheelPositions) {
+                const t0 = localToScreen(v, w.lx - 2.0, w.ly - tireThickness / 2, zGround);
+                const t1 = localToScreen(v, w.lx + 2.0, w.ly - tireThickness / 2, zGround);
+                const t2 = localToScreen(v, w.lx + 2.0, w.ly + tireThickness / 2, zGround);
+                const t3 = localToScreen(v, w.lx - 2.0, w.ly + tireThickness / 2, zGround);
+
+                const r0 = localToScreen(v, w.lx - 2.0, w.ly - tireThickness / 2, zTireTop);
+                const r1 = localToScreen(v, w.lx + 2.0, w.ly - tireThickness / 2, zTireTop);
+                const r2 = localToScreen(v, w.lx + 2.0, w.ly + tireThickness / 2, zTireTop);
+                const r3 = localToScreen(v, w.lx - 2.0, w.ly + tireThickness / 2, zTireTop);
+
+                if (isPolyFrontFacing(t0, t1, r1)) draw3DPoly([t0, t1, r1, r0], "#090d16", "#1e293b");
+                if (isPolyFrontFacing(t1, t2, r2)) draw3DPoly([t1, t2, r2, r1], "#090d16", "#1e293b");
+                if (isPolyFrontFacing(t2, t3, r3)) draw3DPoly([t2, t3, r3, r2], "#090d16", "#1e293b");
+                if (isPolyFrontFacing(t3, t0, r0)) draw3DPoly([t3, t0, r0, r3], "#090d16", "#1e293b");
+                draw3DPoly([r0, r1, r2, r3], "#1e293b", "#0f172a");
+
+                // Metallic rim hubcap
+                const rimCenter = localToScreen(v, w.lx, w.ly, zTireTop / 2);
+                ctx.fillStyle = "#94a3b8";
+                ctx.beginPath();
+                ctx.arc(rimCenter.x, rimCenter.y, 1.0 * camera.zoom, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 3. Lower Chassis 3D Extruded Box
+            const cColor = isPolice ? "#0f172a" : (isAmbulance ? "#ffffff" : v.color);
+            const cColorDark = shadeColor(cColor, 0.72);
+            const cColorLight = shadeColor(cColor, 1.15);
+
+            const b0 = localToScreen(v, -L * 0.48, -W * 0.48, zChassisBottom);
+            const b1 = localToScreen(v, L * 0.48, -W * 0.48, zChassisBottom);
+            const b2 = localToScreen(v, L * 0.48, W * 0.48, zChassisBottom);
+            const b3 = localToScreen(v, -L * 0.48, W * 0.48, zChassisBottom);
+
+            const u0 = localToScreen(v, -L * 0.48, -W * 0.48, zChassisTop);
+            const u1 = localToScreen(v, L * 0.48, -W * 0.48, zChassisTop);
+            const u2 = localToScreen(v, L * 0.48, W * 0.48, zChassisTop);
+            const u3 = localToScreen(v, -L * 0.48, W * 0.48, zChassisTop);
+
+            // Front Bumper / Headlights (+lx)
+            if (isPolyFrontFacing(b1, b2, u2)) {
+                draw3DPoly([b1, b2, u2, u1], isPolice ? "#050811" : cColorDark, "#0f172a");
+                const hlL = localToScreen(v, L * 0.48, -W * 0.35, (zChassisBottom + zChassisTop) / 2);
+                const hlR = localToScreen(v, L * 0.48, W * 0.35, (zChassisBottom + zChassisTop) / 2);
+                ctx.fillStyle = isNightMode ? "#fef08a" : "#ffffff";
                 if (isNightMode) {
-                    ctx.fillStyle = "rgba(255, 255, 220, 0.22)";
+                    ctx.shadowColor = "#fef08a";
+                    ctx.shadowBlur = 6 * camera.zoom;
+                }
+                ctx.beginPath();
+                ctx.arc(hlL.x, hlL.y, 1.4 * camera.zoom, 0, Math.PI * 2);
+                ctx.arc(hlR.x, hlR.y, 1.4 * camera.zoom, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                if (isNightMode) {
+                    const coneL = localToScreen(v, L * 0.48 + 48, -W * 1.5, 0);
+                    const coneR = localToScreen(v, L * 0.48 + 48, W * 1.5, 0);
+                    const hlBase = localToScreen(v, L * 0.48, 0, 0);
+                    const grad = ctx.createLinearGradient(hlBase.x, hlBase.y, (coneL.x + coneR.x) / 2, (coneL.y + coneR.y) / 2);
+                    grad.addColorStop(0, "rgba(254, 240, 138, 0.28)");
+                    grad.addColorStop(1, "rgba(254, 240, 138, 0)");
+                    draw3DPoly([hlL, coneL, coneR, hlR], grad);
+                }
+            }
+
+            // Rear Bumper / Taillights (-lx)
+            if (isPolyFrontFacing(b3, b0, u0)) {
+                draw3DPoly([b3, b0, u0, u3], cColorDark, "#0f172a");
+                const tlL = localToScreen(v, -L * 0.48, -W * 0.35, (zChassisBottom + zChassisTop) / 2);
+                const tlR = localToScreen(v, -L * 0.48, W * 0.35, (zChassisBottom + zChassisTop) / 2);
+                ctx.fillStyle = v.isBraking ? "#ef4444" : "#991b1b";
+                if (v.isBraking) {
+                    ctx.shadowColor = "#ef4444";
+                    ctx.shadowBlur = 8 * camera.zoom;
+                }
+                ctx.beginPath();
+                ctx.arc(tlL.x, tlL.y, 1.5 * camera.zoom, 0, Math.PI * 2);
+                ctx.arc(tlR.x, tlR.y, 1.5 * camera.zoom, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                if (isAmbulance) {
+                    ctx.fillStyle = "#facc15";
+                    ctx.fillRect((tlL.x + tlR.x) / 2 - 4 * camera.zoom, (tlL.y + tlR.y) / 2 - 2 * camera.zoom, 8 * camera.zoom, 4 * camera.zoom);
+                }
+            }
+
+            // Left Side Panel
+            if (isPolyFrontFacing(b0, b1, u1)) {
+                draw3DPoly([b0, b1, u1, u0], isPolice ? "#f8fafc" : cColor, "#0f172a");
+                if (isPolice) {
+                    const doorMid = localToScreen(v, 0, -W * 0.48, (zChassisBottom + zChassisTop) / 2);
+                    ctx.fillStyle = "#0f172a";
+                    ctx.font = `bold ${Math.round(4.5 * camera.zoom)}px sans-serif`;
+                    ctx.fillText("POLICE", doorMid.x, doorMid.y);
+                } else if (isAmbulance) {
+                    const sL1 = localToScreen(v, -L * 0.46, -W * 0.48, (zChassisBottom + zChassisTop) / 2);
+                    const sL2 = localToScreen(v, L * 0.46, -W * 0.48, (zChassisBottom + zChassisTop) / 2);
+                    ctx.strokeStyle = "#ef4444";
+                    ctx.lineWidth = 1.8 * camera.zoom;
+                    ctx.beginPath(); ctx.moveTo(sL1.x, sL1.y); ctx.lineTo(sL2.x, sL2.y); ctx.stroke();
+                }
+            }
+
+            // Right Side Panel
+            if (isPolyFrontFacing(b2, b3, u3)) {
+                draw3DPoly([b2, b3, u3, u2], isPolice ? "#f8fafc" : cColorDark, "#0f172a");
+                if (isPolice) {
+                    const doorMid = localToScreen(v, 0, W * 0.48, (zChassisBottom + zChassisTop) / 2);
+                    ctx.fillStyle = "#0f172a";
+                    ctx.font = `bold ${Math.round(4.5 * camera.zoom)}px sans-serif`;
+                    ctx.fillText("POLICE", doorMid.x, doorMid.y);
+                } else if (isAmbulance) {
+                    const sR1 = localToScreen(v, L * 0.46, W * 0.48, (zChassisBottom + zChassisTop) / 2);
+                    const sR2 = localToScreen(v, -L * 0.46, W * 0.48, (zChassisBottom + zChassisTop) / 2);
+                    ctx.strokeStyle = "#ef4444";
+                    ctx.lineWidth = 1.8 * camera.zoom;
+                    ctx.beginPath(); ctx.moveTo(sR1.x, sR1.y); ctx.lineTo(sR2.x, sR2.y); ctx.stroke();
+                }
+            }
+
+            // Upper Chassis Deck
+            draw3DPoly([u0, u1, u2, u3], isPolice ? "#0f172a" : cColorLight, "#0f172a");
+
+            // Police Push Bullbar
+            if (isPolice) {
+                const bbL = localToScreen(v, L * 0.52, -W * 0.35, zChassisBottom);
+                const bbR = localToScreen(v, L * 0.52, W * 0.35, zChassisBottom);
+                const bbTL = localToScreen(v, L * 0.52, -W * 0.35, zChassisTop + 0.8);
+                const bbTR = localToScreen(v, L * 0.52, W * 0.35, zChassisTop + 0.8);
+                ctx.strokeStyle = "#020617";
+                ctx.lineWidth = 2.2 * camera.zoom;
+                ctx.beginPath();
+                ctx.moveTo(bbL.x, bbL.y); ctx.lineTo(bbTL.x, bbTL.y);
+                ctx.lineTo(bbTR.x, bbTR.y); ctx.lineTo(bbR.x, bbR.y);
+                ctx.stroke();
+            }
+
+            // 4. Upper Cabin Greenhouse Extrusion
+            const Wcab = W * 0.80;
+            const xHood = isBus ? L * 0.46 : (isAmbulance ? L * 0.12 : (isVan ? L * 0.20 : (isSuv ? L * 0.18 : L * 0.14)));
+            const xRoofF = isBus ? L * 0.44 : (isAmbulance ? L * 0.08 : (isVan ? L * 0.12 : (isSuv ? L * 0.06 : L * 0.02)));
+            const xRoofR = isBus ? -L * 0.44 : (isAmbulance ? -L * 0.44 : (isVan ? -L * 0.44 : (isSuv ? -L * 0.38 : -L * 0.18)));
+            const xTrunk = isBus ? -L * 0.46 : (isAmbulance ? -L * 0.46 : (isVan ? -L * 0.46 : (isSuv ? -L * 0.44 : -L * 0.32)));
+
+            const glassColor = isNightMode ? "#0f172a" : "#1e293b";
+
+            const rf0 = localToScreen(v, xRoofR, -Wcab * 0.5, zRoof);
+            const rf1 = localToScreen(v, xRoofF, -Wcab * 0.5, zRoof);
+            const rf2 = localToScreen(v, xRoofF, Wcab * 0.5, zRoof);
+            const rf3 = localToScreen(v, xRoofR, Wcab * 0.5, zRoof);
+
+            const ws0 = localToScreen(v, xHood, -Wcab * 0.5, zChassisTop);
+            const ws1 = localToScreen(v, xHood, Wcab * 0.5, zChassisTop);
+
+            const rw0 = localToScreen(v, xTrunk, -Wcab * 0.5, zChassisTop);
+            const rw1 = localToScreen(v, xTrunk, Wcab * 0.5, zChassisTop);
+
+            if (isPolyFrontFacing(ws0, ws1, rf2)) {
+                draw3DPoly([ws0, ws1, rf2, rf1], glassColor, isNightMode ? "#334155" : "#475569");
+                if (isBus) {
+                    const destSc = localToScreen(v, xRoofF, 0, zRoof - 1.2);
+                    ctx.fillStyle = "#facc15";
+                    ctx.font = `bold ${Math.round(4.2 * camera.zoom)}px sans-serif`;
+                    ctx.textAlign = "center";
+                    ctx.fillText("METRO LINE 42", destSc.x, destSc.y);
+                }
+            }
+
+            if (isPolyFrontFacing(rw1, rw0, rf0)) {
+                draw3DPoly([rw1, rw0, rf0, rf3], isAmbulance || isVan ? cColorDark : glassColor, "#0f172a");
+            }
+
+            const cabSideL_0 = localToScreen(v, xTrunk, -Wcab * 0.5, zChassisTop);
+            const cabSideL_1 = localToScreen(v, xHood, -Wcab * 0.5, zChassisTop);
+            if (isPolyFrontFacing(cabSideL_0, cabSideL_1, rf1)) {
+                draw3DPoly([cabSideL_0, cabSideL_1, rf1, rf0], (isAmbulance || isVan) ? cColor : glassColor, "#0f172a");
+                if (!isVan && !isAmbulance) {
+                    const pA = localToScreen(v, 0, -Wcab * 0.5, zChassisTop);
+                    const pB = localToScreen(v, 0, -Wcab * 0.5, zRoof);
+                    ctx.strokeStyle = cColor;
+                    ctx.lineWidth = 1.5 * camera.zoom;
+                    ctx.beginPath(); ctx.moveTo(pA.x, pA.y); ctx.lineTo(pB.x, pB.y); ctx.stroke();
+                }
+            }
+
+            const cabSideR_0 = localToScreen(v, xHood, Wcab * 0.5, zChassisTop);
+            const cabSideR_1 = localToScreen(v, xTrunk, Wcab * 0.5, zChassisTop);
+            if (isPolyFrontFacing(cabSideR_0, cabSideR_1, rf3)) {
+                draw3DPoly([cabSideR_0, cabSideR_1, rf3, rf2], (isAmbulance || isVan) ? cColorDark : glassColor, "#0f172a");
+                if (!isVan && !isAmbulance) {
+                    const pA = localToScreen(v, 0, Wcab * 0.5, zChassisTop);
+                    const pB = localToScreen(v, 0, Wcab * 0.5, zRoof);
+                    ctx.strokeStyle = cColor;
+                    ctx.lineWidth = 1.5 * camera.zoom;
+                    ctx.beginPath(); ctx.moveTo(pA.x, pA.y); ctx.lineTo(pB.x, pB.y); ctx.stroke();
+                }
+            }
+
+            draw3DPoly([rf0, rf1, rf2, rf3], isPolice ? "#f8fafc" : (isAmbulance ? "#ffffff" : cColorLight), "#0f172a");
+
+            // 5. Rooftop Accessories
+            if (isBus) {
+                const ac1 = localToScreen(v, L * 0.15, 0, zRoof + 0.8);
+                const ac2 = localToScreen(v, -L * 0.15, 0, zRoof + 0.8);
+                ctx.fillStyle = "#e2e8f0";
+                ctx.beginPath();
+                ctx.roundRect(ac1.x - 4 * camera.zoom, ac1.y - 2 * camera.zoom, 8 * camera.zoom, 4 * camera.zoom, 2);
+                ctx.roundRect(ac2.x - 4 * camera.zoom, ac2.y - 2 * camera.zoom, 8 * camera.zoom, 4 * camera.zoom, 2);
+                ctx.fill();
+            } else if (isSuv) {
+                const rL1 = localToScreen(v, xRoofR + 2, -Wcab * 0.45, zRoof + 1.0);
+                const rL2 = localToScreen(v, xRoofF - 2, -Wcab * 0.45, zRoof + 1.0);
+                const rR1 = localToScreen(v, xRoofR + 2, Wcab * 0.45, zRoof + 1.0);
+                const rR2 = localToScreen(v, xRoofF - 2, Wcab * 0.45, zRoof + 1.0);
+                ctx.strokeStyle = "#0f172a";
+                ctx.lineWidth = 1.5 * camera.zoom;
+                ctx.beginPath();
+                ctx.moveTo(rL1.x, rL1.y); ctx.lineTo(rL2.x, rL2.y);
+                ctx.moveTo(rR1.x, rR1.y); ctx.lineTo(rR2.x, rR2.y);
+                ctx.stroke();
+            } else if (isAmbulance) {
+                const rc = localToScreen(v, (xRoofR + xRoofF) / 2, 0, zRoof);
+                const crossW = 2.5 * camera.zoom, crossL = 7 * camera.zoom;
+                ctx.fillStyle = "#ef4444";
+                ctx.fillRect(rc.x - crossW / 2, rc.y - crossL / 2, crossW, crossL);
+                ctx.fillRect(rc.x - crossL / 2, rc.y - crossW / 2, crossL, crossW);
+
+                const flashAmber = (Date.now() % 260 < 130);
+                const bCol = flashAmber ? "#f59e0b" : "#ef4444";
+                const cCorners = [rf0, rf1, rf2, rf3];
+                ctx.fillStyle = bCol;
+                ctx.shadowColor = bCol;
+                ctx.shadowBlur = 8 * camera.zoom;
+                ctx.beginPath();
+                for (const pt of cCorners) {
+                    ctx.arc(pt.x, pt.y, 1.8 * camera.zoom, 0, Math.PI * 2);
+                }
+                ctx.fill();
+                ctx.shadowBlur = 0;
+
+                if (flashAmber) {
+                    const gCenter = localToScreen(v, 0, 0, 0);
+                    ctx.fillStyle = "rgba(245, 158, 11, 0.25)";
                     ctx.beginPath();
-                    ctx.moveTo(L / 2, -W * 0.35);
-                    ctx.lineTo(L / 2 + 42 * camera.zoom, -W * 1.6);
-                    ctx.lineTo(L / 2 + 42 * camera.zoom, W * 1.6);
-                    ctx.lineTo(L / 2, W * 0.35);
-                    ctx.closePath();
+                    ctx.arc(gCenter.x, gCenter.y, 18 * camera.zoom, 0, Math.PI * 2);
                     ctx.fill();
                 }
+            } else if (isPolice) {
+                const tStrobe = (Date.now() / 70) % 8;
+                const flashBlue = (tStrobe < 2 || (tStrobe >= 3 && tStrobe < 4));
+                const flashRed = (tStrobe >= 4 && tStrobe < 6 || tStrobe >= 7);
 
-                // 1. SPECTACULAR 2.5D POLICE CRUISER
-                if (v.isEmergency && v.emergencyType === "police") {
-                    renderPoliceCruiser(v, L, W);
-                }
-                // 2. HIGH-DETAIL 2.5D AMBULANCE
-                else if (v.isEmergency && v.emergencyType === "ambulance") {
-                    renderAmbulance(v, L, W);
-                }
-                // 3. REGULAR TRAFFIC (Sedan, SUV, Van, Transit Bus)
-                else {
-                    renderRegularVehicle(v, L, W);
-                }
+                const lbL = localToScreen(v, 0, -Wcab * 0.45, zRoof + 1.0);
+                const lbR = localToScreen(v, 0, Wcab * 0.45, zRoof + 1.0);
+                ctx.strokeStyle = "#0f172a";
+                ctx.lineWidth = 2.5 * camera.zoom;
+                ctx.beginPath(); ctx.moveTo(lbL.x, lbL.y); ctx.lineTo(lbR.x, lbR.y); ctx.stroke();
 
-                // Brake lights when stopping or queued
-                if (v.isBraking) {
-                    ctx.fillStyle = "#ef4444";
-                    ctx.shadowColor = "#ef4444";
-                    ctx.shadowBlur = 9 * camera.zoom;
-                    ctx.fillRect(-L / 2 - 1, -W / 2 + 1, 2, 2.5 * camera.zoom);
-                    ctx.fillRect(-L / 2 - 1, W / 2 - 3.5 * camera.zoom, 2, 2.5 * camera.zoom);
-                    ctx.shadowBlur = 0;
-                }
+                ctx.fillStyle = flashBlue ? "#38bdf8" : "#0e3a5a";
+                ctx.shadowColor = flashBlue ? "#38bdf8" : "transparent";
+                ctx.shadowBlur = flashBlue ? 12 * camera.zoom : 0;
+                ctx.beginPath();
+                ctx.arc(lbL.x, lbL.y, 2.2 * camera.zoom, 0, Math.PI * 2);
+                ctx.fill();
 
-                // CHASE CAM LOCK RETICLE BRACKETS & BADGE
-                if (v.id === followedVehicleId) {
-                    renderChaseReticle(v, L, W);
-                }
+                ctx.fillStyle = flashRed ? "#ef4444" : "#5a1414";
+                ctx.shadowColor = flashRed ? "#ef4444" : "transparent";
+                ctx.shadowBlur = flashRed ? 12 * camera.zoom : 0;
+                ctx.beginPath();
+                ctx.arc(lbR.x, lbR.y, 2.2 * camera.zoom, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
 
-                ctx.restore();
+                const gCenter = localToScreen(v, 0, 0, 0);
+                if (flashBlue) {
+                    ctx.fillStyle = "rgba(56, 189, 248, 0.32)";
+                    ctx.beginPath();
+                    ctx.arc(gCenter.x - 4 * camera.zoom, gCenter.y, 16 * camera.zoom, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                if (flashRed) {
+                    ctx.fillStyle = "rgba(239, 68, 68, 0.32)";
+                    ctx.beginPath();
+                    ctx.arc(gCenter.x + 4 * camera.zoom, gCenter.y, 16 * camera.zoom, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // 6. Chase Reticle
+            if (v.id === followedVehicleId) {
+                renderChaseReticle(v, L, W);
             }
         }
 
@@ -3336,299 +4127,99 @@
 
             const pad = 6 * camera.zoom;
             const bL = 7 * camera.zoom;
-            const x1 = -L / 2 - pad, x2 = L / 2 + pad;
-            const y1 = -W / 2 - pad, y2 = W / 2 + pad;
+            const sc = worldToScreen(v.x, v.y, 0);
+            const zH = 8 * camera.zoom;
 
-            // 4 Corner Brackets
+            // Target lock box
+            const x1 = sc.x - (L / 2 + pad) * camera.zoom;
+            const x2 = sc.x + (L / 2 + pad) * camera.zoom;
+            const y1 = sc.y - (W / 2 + pad + zH) * camera.zoom;
+            const y2 = sc.y + (W / 2 + pad) * camera.zoom;
+
             ctx.beginPath(); ctx.moveTo(x1, y1 + bL); ctx.lineTo(x1, y1); ctx.lineTo(x1 + bL, y1); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(x2 - bL, y1); ctx.lineTo(x2, y1); ctx.lineTo(x2, y1 + bL); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(x1, y2 - bL); ctx.lineTo(x1, y2); ctx.lineTo(x1 + bL, y2); ctx.stroke();
             ctx.beginPath(); ctx.moveTo(x2 - bL, y2); ctx.lineTo(x2, y2); ctx.lineTo(x2, y2 - bL); ctx.stroke();
 
-            // Pulsing target ring
             const pulseR = (18 + Math.sin(Date.now() * 0.008) * 3) * camera.zoom;
             ctx.strokeStyle = "rgba(56, 189, 248, 0.4)";
-            ctx.lineWidth = 1;
             ctx.beginPath();
-            ctx.arc(0, 0, pulseR, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // Floating callout tag above vehicle
-            ctx.fillStyle = "rgba(15, 23, 42, 0.88)";
-            ctx.strokeStyle = "#38bdf8";
-            ctx.lineWidth = 1;
-            const tagText = `#TRF-${v.id} · ${(v.speed * 28).toFixed(0)} km/h`;
-            ctx.font = `bold ${Math.round(8 * camera.zoom)}px 'SF Mono', Menlo, monospace`;
-            const tw = ctx.measureText(tagText).width;
-            ctx.beginPath();
-            ctx.roundRect(-tw / 2 - 5, -W / 2 - 20 * camera.zoom, tw + 10, 14 * camera.zoom, 4);
-            ctx.fill();
+            ctx.arc(sc.x, sc.y, pulseR, 0, Math.PI * 2);
             ctx.stroke();
 
             ctx.fillStyle = "#38bdf8";
+            ctx.font = `bold ${Math.round(8 * camera.zoom)}px monospace`;
             ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText(tagText, 0, -W / 2 - 13 * camera.zoom);
-
+            ctx.fillText(`LOCKED #${v.id} (${v.type.toUpperCase()})`, sc.x, y1 - 6 * camera.zoom);
             ctx.restore();
         }
 
-        function renderPoliceCruiser(v, L, W) {
-            // Drop shadow
-            ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
-            ctx.beginPath();
-            ctx.roundRect(-L / 2 + 2, -W / 2 + 2, L, W, 3);
-            ctx.fill();
-
-            // Authentic NYPD / Highway Patrol black & white chassis
-            // Black hood and trunk
-            ctx.fillStyle = "#0f172a";
-            ctx.beginPath();
-            ctx.roundRect(-L / 2, -W / 2, L, W, 3);
-            ctx.fill();
-
-            // White cab & doors
-            ctx.fillStyle = "#f8fafc";
-            ctx.fillRect(-L * 0.25, -W / 2, L * 0.5, W);
-
-            // Matte Black Push Bumper / Bullbar at front
-            ctx.fillStyle = "#020617";
-            ctx.fillRect(L / 2 - 1, -W * 0.4, 2.5, W * 0.8);
-
-            // Windshield and rear glass
-            ctx.fillStyle = "#1e293b";
-            ctx.fillRect(L * 0.12, -W * 0.35, L * 0.18, W * 0.7);
-            ctx.fillRect(-L * 0.25, -W * 0.35, L * 0.15, W * 0.7);
-
-            // Decal badge "POLICE"
-            ctx.fillStyle = "#facc15";
-            ctx.font = `bold ${Math.round(5 * camera.zoom)}px sans-serif`;
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText("POLICE", 0, 0);
-
-            // DUAL BLUE / RED LED STROBE LIGHTBAR ON ROOF
-            const t = (Date.now() / 70) % 8;
-            const flashBlue = (t < 2 || (t >= 3 && t < 4));
-            const flashRed = (t >= 4 && t < 6 || t >= 7);
-
-            // Blue strobe (left)
-            ctx.fillStyle = flashBlue ? "#38bdf8" : "#0e3a5a";
-            ctx.shadowColor = flashBlue ? "#38bdf8" : "transparent";
-            ctx.shadowBlur = flashBlue ? 12 * camera.zoom : 0;
-            ctx.fillRect(-2 * camera.zoom, -W / 2, 4 * camera.zoom, W * 0.45);
-
-            // Red strobe (right)
-            ctx.fillStyle = flashRed ? "#ef4444" : "#5a1414";
-            ctx.shadowColor = flashRed ? "#ef4444" : "transparent";
-            ctx.shadowBlur = flashRed ? 12 * camera.zoom : 0;
-            ctx.fillRect(-2 * camera.zoom, W * 0.05, 4 * camera.zoom, W * 0.45);
-            ctx.shadowBlur = 0;
-
-            // DUAL STROBE GROUND REFLECTIONS ON ASPHALT
-            if (flashBlue) {
-                ctx.fillStyle = "rgba(56, 189, 248, 0.35)";
-                ctx.beginPath();
-                ctx.ellipse(-2, -W, 14 * camera.zoom, 8 * camera.zoom, 0, 0, Math.PI * 2);
-                ctx.fill();
-            }
-            if (flashRed) {
-                ctx.fillStyle = "rgba(239, 68, 68, 0.35)";
-                ctx.beginPath();
-                ctx.ellipse(-2, W, 14 * camera.zoom, 8 * camera.zoom, 0, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-
-        function renderAmbulance(v, L, W) {
-            // Drop shadow
-            ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
-            ctx.beginPath();
-            ctx.roundRect(-L / 2 + 2, -W / 2 + 2, L, W, 3);
-            ctx.fill();
-
-            // High-detail box body modular ambulance
-            ctx.fillStyle = "#ffffff";
-            ctx.beginPath();
-            ctx.roundRect(-L / 2, -W / 2, L, W, 3.5);
-            ctx.fill();
-
-            // Red stripe along beltline
-            ctx.fillStyle = "#ef4444";
-            ctx.fillRect(-L / 2, -W / 2 + 1, L, 1.5 * camera.zoom);
-            ctx.fillRect(-L / 2, W / 2 - 2.5 * camera.zoom, L, 1.5 * camera.zoom);
-
-            // Emergency Red Cross Logo on Roof
-            const crossSize = 4 * camera.zoom;
-            ctx.fillStyle = "#ef4444";
-            ctx.fillRect(-L * 0.1 - crossSize / 2, -crossSize * 1.5, crossSize, crossSize * 3);
-            ctx.fillRect(-L * 0.1 - crossSize * 1.5, -crossSize / 2, crossSize * 3, crossSize);
-
-            // Yellow/Red chevron safety striping on rear bumper
-            ctx.fillStyle = "#facc15";
-            ctx.fillRect(-L / 2, -W / 2, 2 * camera.zoom, W);
-
-            // Amber flashers on front corners
-            const flashAmber = (Date.now() % 260 < 130);
-            ctx.fillStyle = flashAmber ? "#f59e0b" : "#452d10";
-            ctx.shadowColor = flashAmber ? "#f59e0b" : "transparent";
-            ctx.shadowBlur = flashAmber ? 10 * camera.zoom : 0;
-            ctx.fillRect(L / 2 - 1, -W / 2 + 1, 2, 2.5 * camera.zoom);
-            ctx.fillRect(L / 2 - 1, W / 2 - 3.5 * camera.zoom, 2, 2.5 * camera.zoom);
-            ctx.shadowBlur = 0;
-
-            // Ground reflection
-            if (flashAmber) {
-                ctx.fillStyle = "rgba(245, 158, 11, 0.28)";
-                ctx.beginPath();
-                ctx.arc(0, 0, 16 * camera.zoom, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-
-        function renderRegularVehicle(v, L, W) {
-            // Drop shadow
-            ctx.fillStyle = "rgba(0, 0, 0, 0.38)";
-            ctx.beginPath();
-            ctx.roundRect(-L / 2 + 2, -W / 2 + 2, L, W, 3);
-            ctx.fill();
-
-            // Vehicle body chassis
-            ctx.fillStyle = v.color;
-            ctx.beginPath();
-            ctx.roundRect(-L / 2, -W / 2, L, W, v.type === "bus" ? 3.5 : 2.5);
-            ctx.fill();
-
-            // Highlight sheen along roof edge
-            ctx.fillStyle = "rgba(255, 255, 255, 0.16)";
-            ctx.fillRect(-L / 2, -W / 2 + 1, L, 1.2 * camera.zoom);
-
-            const glassCol = isNightMode ? "#0f172a" : "#334155";
-
-            if (v.type === "bus") {
-                // Multi-window Metro Transit Bus
-                ctx.fillStyle = glassCol;
-                // Front windshield
-                ctx.fillRect(L * 0.28, -W * 0.42, L * 0.18, W * 0.84);
-                // Side passenger windows
-                const winCount = 4;
-                const winW = (L * 0.58) / winCount;
-                for (let w = 0; w < winCount; w++) {
-                    ctx.fillRect(-L * 0.42 + w * winW + 1, -W * 0.46, winW - 2, 2 * camera.zoom);
-                    ctx.fillRect(-L * 0.42 + w * winW + 1, W * 0.46 - 2 * camera.zoom, winW - 2, 2 * camera.zoom);
-                }
-                // White roof AC pods
-                ctx.fillStyle = "#f1f5f9";
-                ctx.fillRect(-L * 0.2, -W * 0.25, L * 0.22, W * 0.5);
-                ctx.fillRect(L * 0.05, -W * 0.25, L * 0.18, W * 0.5);
-            } else if (v.type === "van") {
-                // Cargo delivery van with cab glass and roof ribs
-                ctx.fillStyle = glassCol;
-                ctx.fillRect(L * 0.15, -W * 0.42, L * 0.22, W * 0.84);
-                // Roof structural ribs
-                ctx.fillStyle = "rgba(0, 0, 0, 0.16)";
-                for (let r = -0.35; r <= 0.05; r += 0.13) {
-                    ctx.fillRect(L * r, -W * 0.35, 2 * camera.zoom, W * 0.7);
-                }
-            } else if (v.type === "suv") {
-                // SUV with front glass, rear quarter glass and luggage rails
-                ctx.fillStyle = glassCol;
-                ctx.fillRect(L * 0.1, -W * 0.4, L * 0.24, W * 0.8);
-                ctx.fillRect(-L * 0.3, -W * 0.4, L * 0.15, W * 0.8);
-                // Roof luggage rails
-                ctx.fillStyle = "#0f172a";
-                ctx.fillRect(-L * 0.2, -W * 0.46, L * 0.35, 1.2 * camera.zoom);
-                ctx.fillRect(-L * 0.2, W * 0.46 - 1.2 * camera.zoom, L * 0.35, 1.2 * camera.zoom);
-            } else {
-                // Sedan: sleek aerodynamic windshield and rear window
-                ctx.fillStyle = glassCol;
-                ctx.fillRect(L * 0.12, -W * 0.38, L * 0.22, W * 0.76);
-                ctx.fillRect(-L * 0.28, -W * 0.38, L * 0.16, W * 0.76);
-            }
-
-            // Headlamp lenses (front)
-            ctx.fillStyle = isNightMode ? "#fef08a" : "#ffffff";
-            ctx.fillRect(L / 2 - 1, -W / 2 + 1, 1.5, 2 * camera.zoom);
-            ctx.fillRect(L / 2 - 1, W / 2 - 3 * camera.zoom, 1.5, 2 * camera.zoom);
-        }
-
         /* -------------------------------------------------------------------------
-           INCIDENT SCENES (CRASHES, CONES, SMOKE PARTICLES)
+           INCIDENT SCENES & PARTICLES
            ------------------------------------------------------------------------- */
-        function renderIncidents() {
-            for (const inc of activeIncidents) {
-                const sc = worldToScreen(inc.x, inc.y, 0);
+        function renderIncidentScene(inc) {
+            const sc = worldToScreen(inc.x, inc.y, 0);
 
-                // Pulsing hazard perimeter ring
-                ctx.strokeStyle = "rgba(239, 68, 68, 0.75)";
-                ctx.lineWidth = 2.5;
-                ctx.setLineDash([5, 5]);
-                ctx.beginPath();
-                ctx.arc(sc.x, sc.y, 35 * camera.zoom, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.setLineDash([]);
+            // Pulsing hazard perimeter ring
+            ctx.strokeStyle = "rgba(239, 68, 68, 0.75)";
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.arc(sc.x, sc.y, 35 * camera.zoom, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
 
-                if (inc.type === "collision") {
-                    // Two crashed vehicles angled into each other
-                    ctx.save();
-                    ctx.translate(sc.x, sc.y);
-                    ctx.rotate(0.35);
-                    ctx.fillStyle = "#ef4444";
-                    ctx.fillRect(-10 * camera.zoom, -5 * camera.zoom, 20 * camera.zoom, 10 * camera.zoom);
-                    ctx.rotate(-0.7);
-                    ctx.fillStyle = "#f59e0b";
-                    ctx.fillRect(-8 * camera.zoom, -5 * camera.zoom, 20 * camera.zoom, 10 * camera.zoom);
-                    ctx.restore();
-
-                    // Skid marks
-                    ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
-                    ctx.lineWidth = 2.5;
-                    ctx.beginPath();
-                    ctx.moveTo(sc.x - 18 * camera.zoom, sc.y + 12 * camera.zoom);
-                    ctx.lineTo(sc.x - 4 * camera.zoom, sc.y + 4 * camera.zoom);
-                    ctx.stroke();
-                } else {
-                    // Warning hazard triangle
-                    ctx.fillStyle = "#f59e0b";
-                    ctx.beginPath();
-                    ctx.moveTo(sc.x, sc.y - 12 * camera.zoom);
-                    ctx.lineTo(sc.x - 10 * camera.zoom, sc.y + 8 * camera.zoom);
-                    ctx.lineTo(sc.x + 10 * camera.zoom, sc.y + 8 * camera.zoom);
-                    ctx.closePath();
-                    ctx.fill();
-                }
-
-                // Floating alert badge
+            if (inc.type === "collision") {
+                // Two crashed vehicles angled into each other
+                const p1 = worldToScreen(inc.x - 6, inc.y - 4, 1.5);
+                const p2 = worldToScreen(inc.x + 6, inc.y + 4, 1.5);
                 ctx.fillStyle = "#ef4444";
-                ctx.font = `bold ${Math.round(11 * camera.zoom)}px sans-serif`;
-                ctx.textAlign = "center";
-                ctx.fillText("🚨 COLLISION ACTIVE", sc.x, sc.y - 25 * camera.zoom);
+                ctx.beginPath();
+                ctx.arc(p1.x, p1.y, 8 * camera.zoom, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = "#f59e0b";
+                ctx.beginPath();
+                ctx.arc(p2.x, p2.y, 7 * camera.zoom, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                ctx.fillStyle = "#f59e0b";
+                ctx.beginPath();
+                ctx.moveTo(sc.x, sc.y - 12 * camera.zoom);
+                ctx.lineTo(sc.x - 10 * camera.zoom, sc.y + 8 * camera.zoom);
+                ctx.lineTo(sc.x + 10 * camera.zoom, sc.y + 8 * camera.zoom);
+                ctx.closePath();
+                ctx.fill();
             }
+
+            // Alert badge
+            ctx.fillStyle = "#ef4444";
+            ctx.font = `bold ${Math.round(11 * camera.zoom)}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.fillText("🚨 COLLISION ACTIVE", sc.x, sc.y - 25 * camera.zoom);
         }
 
-        function renderParticles() {
-            for (const p of particles) {
-                if (p.type === "siren_pulse") {
-                    const sc = worldToScreen(p.x, p.y, 0);
-                    ctx.strokeStyle = p.color;
-                    ctx.globalAlpha = p.life * 0.65;
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.arc(sc.x, sc.y, p.radius * camera.zoom, 0, Math.PI * 2);
-                    ctx.stroke();
-                    ctx.globalAlpha = 1.0;
-                } else {
-                    const sc = worldToScreen(p.x, p.y, 0);
-                    ctx.fillStyle = p.color + p.life + ")";
-                    ctx.beginPath();
-                    ctx.arc(sc.x, sc.y, p.size * camera.zoom, 0, Math.PI * 2);
-                    ctx.fill();
-                }
+        function renderParticleItem(p) {
+            if (p.type === "siren_pulse") {
+                const sc = worldToScreen(p.x, p.y, 0);
+                ctx.strokeStyle = p.color;
+                ctx.globalAlpha = p.life * 0.65;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(sc.x, sc.y, p.radius * camera.zoom, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.globalAlpha = 1.0;
+            } else {
+                const sc = worldToScreen(p.x, p.y, p.z || 0);
+                ctx.fillStyle = p.color + p.life + ")";
+                ctx.beginPath();
+                ctx.arc(sc.x, sc.y, p.size * camera.zoom, 0, Math.PI * 2);
+                ctx.fill();
             }
         }
 
         /* -------------------------------------------------------------------------
-           SKEUOMORPHIC CRT RADAR MINI-MAP
+           SKEUOMORPHIC CRT RADAR MINI-MAP WITH ROTATED CAMERA FRUSTUM
            ------------------------------------------------------------------------- */
         function renderMiniMap() {
             mCtx.clearRect(0, 0, miniCanvas.width, miniCanvas.height);
@@ -3683,7 +4274,6 @@
                 mCtx.fillStyle = v.isEmergency ? (v.emergencyType === "police" ? "#38bdf8" : "#ef4444") : "#94a3b8";
                 mCtx.fillRect(v.x * scaleX - 1, v.y * scaleY - 1, 2, 2);
 
-                // Highlight followed vehicle on radar scope
                 if (v.id === followedVehicleId) {
                     mCtx.strokeStyle = "#38bdf8";
                     mCtx.lineWidth = 1.5;
@@ -3701,17 +4291,20 @@
                 mCtx.fill();
             }
 
-            // Camera Viewport Wireframe Polygon
-            const pTL = screenToWorld(0, 0);
-            const pBR = screenToWorld(cityCanvas.width, cityCanvas.height);
+            // Rotated Camera Frustum Quad on Radar Scope
+            const c0 = screenToWorld(0, 0);
+            const c1 = screenToWorld(cityCanvas.width, 0);
+            const c2 = screenToWorld(cityCanvas.width, cityCanvas.height);
+            const c3 = screenToWorld(0, cityCanvas.height);
             mCtx.strokeStyle = "#eab308";
             mCtx.lineWidth = 1.5;
-            mCtx.strokeRect(
-                Math.max(0, pTL.x * scaleX),
-                Math.max(0, pTL.y * scaleY),
-                Math.min(miniCanvas.width, (pBR.x - pTL.x) * scaleX),
-                Math.min(miniCanvas.height, (pBR.y - pTL.y) * scaleY)
-            );
+            mCtx.beginPath();
+            mCtx.moveTo(c0.x * scaleX, c0.y * scaleY);
+            mCtx.lineTo(c1.x * scaleX, c1.y * scaleY);
+            mCtx.lineTo(c2.x * scaleX, c2.y * scaleY);
+            mCtx.lineTo(c3.x * scaleX, c3.y * scaleY);
+            mCtx.closePath();
+            mCtx.stroke();
         }
 
         function updateRadarHUD() {
@@ -3720,10 +4313,6 @@
                 zoomLabel.textContent = camera.zoom.toFixed(1) + "x";
             }
         }
-
-        /* =========================================================================
-           INSPECTOR UI & DIAGNOSTICS SYNCHRONIZATION
-           ========================================================================= */
 
         function updateInspectorUI() {
             const junc = INTERSECTIONS[selectedJunctionId];

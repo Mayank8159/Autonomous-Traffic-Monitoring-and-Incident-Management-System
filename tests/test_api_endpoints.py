@@ -20,6 +20,7 @@ BASE_URL = f"http://127.0.0.1:{TEST_PORT}"
 
 def start_test_server():
     server_address = ("127.0.0.1", TEST_PORT)
+    ThreadingHTTPServer.allow_reuse_address = True
     httpd = ThreadingHTTPServer(server_address, ATMSRequestHandler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()

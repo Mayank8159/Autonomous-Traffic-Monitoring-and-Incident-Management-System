@@ -243,6 +243,17 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length")
         super().end_headers()
 
+    def _send_json_response(self, data, code=200):
+        if isinstance(data, (bytes, bytearray)):
+            payload = data
+        else:
+            payload = json.dumps(data).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
     def do_OPTIONS(self):
         self.send_response(200)
         self.end_headers()
@@ -260,9 +271,6 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
 
         # Status endpoint
         if path == "/api/status":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
             models_status = {
                 "custom_cnn": os.path.exists(os.path.join(ROOT_DIR, "models", "custom_cnn.pt")) and getattr(_city_env, "custom_cnn", None) is not None,
                 "sequence_gan": os.path.exists(os.path.join(ROOT_DIR, "models", "sequence_gan.pt")) and getattr(_city_env, "gan_generator", None) is not None,
@@ -287,14 +295,11 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
                 }
                 if _job["state"] == "done" and _job["result"] is not None:
                     resp["job"]["result"] = _job["result"]
-            self.wfile.write(json.dumps(resp).encode("utf-8"))
+            self._send_json_response(resp)
             return
 
         # City Network Topology endpoint
         if path == "/api/city/topology":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
             topo = {
                 "width": CITY_WIDTH,
                 "height": CITY_HEIGHT,
@@ -302,14 +307,11 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
                 "facilities": FACILITIES,
                 "road_segments": ROAD_SEGMENTS,
             }
-            self.wfile.write(json.dumps(topo).encode("utf-8"))
+            self._send_json_response(topo)
             return
 
         # City Network State endpoint (Fully Thread-Safe)
         if path == "/api/city/state":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
             with _city_lock:
                 import numpy as np
                 inter_states = _city_env.get_state()
@@ -334,8 +336,7 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
                     "vae_residual": avg_vae,
                     "max_vae_residual": max_vae,
                 }
-                serialized = json.dumps(state_data).encode("utf-8")
-            self.wfile.write(serialized)
+            self._send_json_response(state_data)
             return
 
         super().do_GET()
@@ -361,10 +362,7 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
         elif path == "/api/policy/predict":
             self.handle_policy_predict()
         else:
-            self.send_response(404)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": f"Unknown endpoint {path}"}).encode("utf-8"))
+            self._send_json_response({"error": f"Unknown endpoint {path}"}, code=404)
 
     def _read_json_body(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -381,16 +379,13 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
         actions = body.get("actions", None)
         with _city_lock:
             state, reward, done, info = _city_env.step(actions)
-            payload = json.dumps({
+            payload = {
                 "state": state,
                 "reward": float(reward),
                 "done": bool(done),
                 "info": info
-            }).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(payload)
+            }
+        self._send_json_response(payload)
 
     def handle_city_incident(self):
         body = self._read_json_body()
@@ -403,11 +398,8 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
             incident = _city_env.trigger_incident(
                 location_node=node_id, incident_type=inc_type, x=x, y=y, blocked_approach=approach
             )
-            payload = json.dumps({"incident": incident, "status": "dispatched"}).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(payload)
+            payload = {"incident": incident, "status": "dispatched"}
+        self._send_json_response(payload)
 
     def handle_city_resolve_incident(self):
         body = self._read_json_body()
@@ -421,20 +413,14 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
                 _city_env.preemption_active = False
                 for inter in _city_env.intersections.values():
                     inter.preemption = False
-            payload = json.dumps({"status": "resolved"}).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(payload)
+            payload = {"status": "resolved"}
+        self._send_json_response(payload)
 
     def handle_city_reset(self):
         with _city_lock:
             state = _city_env.reset()
-            payload = json.dumps({"state": state, "status": "reset"}).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(payload)
+            payload = {"state": state, "status": "reset"}
+        self._send_json_response(payload)
 
     def handle_gan_generate(self):
         body = self._read_json_body()
