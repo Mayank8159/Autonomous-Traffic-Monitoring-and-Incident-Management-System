@@ -394,8 +394,8 @@ def run_kinematics_verification():
                         // If trailing car is queued behind lead (both stopped)
                         if (lead.speed === 0 && trail.speed === 0) {
                             totalQueuePairs++;
-                            // Expected gap >= 28px
-                            if (distAhead < 27.9) {
+                            // Expected safe bumper gap >= 26.0px (Pass 7 targets 28px; Pass 8 minSafeBumper = 26.2px)
+                            if (distAhead < 26.0) {
                                 violations.push({
                                     type: 'gap_too_small',
                                     leadId: lead.id,
@@ -798,6 +798,82 @@ def run_kinematics_verification():
         assert fluid_res["trailAccel"] >= 0.035 or fluid_res["trailSpeed"] > 0, \
             f"Trailing car failed to accelerate immediately: accel={fluid_res['trailAccel']}, speed={fluid_res['trailSpeed']}"
         print(f"[PASS] Fluid queue discharge verified: IDM acceleration {fluid_res['idmAccel']:.4f} >= 0.035 px/frame.", flush=True)
+
+        # 11F. Demand-Driven AI: Empty-Arm Exclusion, Standby All-Red & Non-Sequential Gap-Out
+        print("[KINEMATICS] Verifying Demand-Driven AI (empty-arm exclusion, Standby All-Red, non-sequential N->W jump)...", flush=True)
+        ai_demand_res = page.evaluate("""() => {
+            // 1. Empty-arm exclusion: even with huge wait times on empty arms, non-empty W must win
+            const scored = evaluate4ArmRLPolicy({
+                queues: [0.0, 0.0, 0.0, 2.5],
+                activeArm: "N",
+                armWaitTimes: { N: 0, S: 90, E: 90, W: 0 },
+                isAllRed: false
+            });
+
+            // 2. Live Standby All-Red when all 4 arms have 0 vehicles
+            vehicles = [];
+            activeIncidents = [];
+            emergencyPreemptionCorridor = [];
+            initializeJunctionsFromDemands();
+            updateTrafficSignals(0.1);
+            const allStandby = Object.values(junctionStates).every(
+                st => st.isStandby && st.isAllRed && st.activeArm === null && APPROACH_DIRS.every(d => st.signals[d] === "red")
+            );
+
+            // 3. Instant wake-up on West vehicle arrival + fast gap-out N -> W
+            const j2 = INTERSECTIONS["INT_2"];
+            vehicles.push({
+                id: 9950,
+                type: "sedan",
+                color: "#3b82f6",
+                corridorId: "H1",
+                direction: 1,
+                x: j2.x - 80,
+                y: CORRIDORS["H1"].y + 16,
+                speed: 0.0,
+                accel: 0.0,
+                targetSpeed: 1.0,
+                heading: 0,
+                length: 20,
+                isBraking: true,
+                isEmergency: false,
+                state: "CRUISING",
+                nextIntersection: "INT_2"
+            });
+
+            const st2 = junctionStates["INT_2"];
+            st2.isStandby = false;
+            st2.isAllRed = false;
+            st2.isAmber = false;
+            st2.activeArm = "N";
+            st2.targetArm = "N";
+            st2.phase = 0;
+            st2.phaseTime = 1.1;
+            st2.nextInferenceTimer = 0.0;
+            st2.queues = [0, 0, 0, 1.0];
+            enforceSingleSignalInvariant(st2);
+
+            const visited = ["N"];
+            let immediateAmber = false;
+            for (let step = 0; step < 50; step++) {
+                updateTrafficSignals(0.25);
+                if (step === 0 && st2.isAmber && st2.targetArm === "W") immediateAmber = true;
+                if (st2.activeArm && !visited.includes(st2.activeArm)) visited.push(st2.activeArm);
+                if (!st2.isAmber && !st2.isAllRed && st2.activeArm === "W") break;
+            }
+
+            const finalSig = { ...st2.signals };
+            resetCitySimulation();
+            return { scored, allStandby, immediateAmber, visited, finalSig };
+        }""")
+        assert ai_demand_res["scored"]["bestArm"] == "W", f"Empty arm outscored queued West arm: {ai_demand_res['scored']}"
+        assert ai_demand_res["scored"]["armScores"]["N"] == 0.0 and ai_demand_res["scored"]["armScores"]["S"] == 0.0 and ai_demand_res["scored"]["armScores"]["E"] == 0.0, \
+            f"Empty arms must have 0.0 softmax score: {ai_demand_res['scored']['armScores']}"
+        assert ai_demand_res["allStandby"], "Empty intersections did not rest in Standby All-Red!"
+        assert ai_demand_res["immediateAmber"], "Empty active N arm failed to gap out immediately at phaseTime=1.1s!"
+        assert ai_demand_res["visited"] == ["N", "W"], f"Expected non-sequential ['N', 'W'] jump, got {ai_demand_res['visited']}"
+        assert ai_demand_res["finalSig"] == {"N": "red", "S": "red", "E": "red", "W": "green"}, f"Unexpected final signals: {ai_demand_res['finalSig']}"
+        print("[PASS] Demand-driven AI verified in kinematics suite: empty-arm exclusion, Standby All-Red, and direct N -> W gap-out.", flush=True)
 
         # 16. Check Console Errors, Page Exceptions, and Failed Network Requests
         assert len(console_errors) == 0, f"Found console/page errors: {console_errors}"

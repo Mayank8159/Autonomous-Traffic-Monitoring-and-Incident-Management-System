@@ -27,7 +27,7 @@ from src.model import load_policy, export_policy_weights_to_js
 from src.vae import load_sequence_vae, detect_incident_anomaly
 from src.cnn_custom import load_custom_cnn
 from src.gan import load_traffic_gan, generate_scenario
-from src.city_network import CityNetworkEnv, INTERSECTIONS, FACILITIES, ROAD_SEGMENTS
+from src.city_network import CityNetworkEnv, IntersectionState, INTERSECTIONS, FACILITIES, ROAD_SEGMENTS
 
 
 def test_models_exist_and_load():
@@ -222,3 +222,148 @@ def test_city_network_single_signal_invariant_and_4arm_actuation():
     env.resolve_incident(inc["id"])
     state = env.get_state()
     assert not state["INT_2"]["preemption"]
+
+
+def test_backend_empty_arm_exclusion_and_wait_timers():
+    """Verify empty arms never gain wait timers or outscore queued arms in compute_arm_scores."""
+    inter = IntersectionState("INT_1", INTERSECTIONS["INT_1"], initial_queues=[0.0, 0.0, 0.0, 2.0])
+    # Force active green to North (empty) and high wait timers on empty S/E arms
+    inter.active_approach = 0
+    inter.is_yellow = False
+    inter.is_all_red = False
+    inter.wait_timers = [50, 50, 50, 0]
+
+    scores = inter.compute_arm_scores([0.99, 0.01])
+    assert scores[0] == -50.0 and scores[1] == -50.0 and scores[2] == -50.0, (
+        f"Empty arms not penalized to -50.0 when W has demand: {scores}"
+    )
+    assert scores[3] > 0.0, f"Queued West arm should score > 0: {scores}"
+    assert int(np.argmax(scores)) == 3, f"Empty arm outscored queued West arm: {scores}"
+
+    # Verify _update_wait_timers resets empty arms & active green, increments only non-empty red arms
+    inter.queues = np.array([0.0, 3.0, 0.0, 2.0], dtype=np.float32)
+    inter.wait_timers = [10, 4, 10, 2]
+    inter._update_wait_timers()
+    assert inter.wait_timers == [0, 5, 0, 3], f"Unexpected wait_timers update: {inter.wait_timers}"
+
+    # When all 4 arms are empty, scores are 0.0 and wait_timers reset to 0
+    inter.queues = np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    inter._update_wait_timers()
+    assert inter.wait_timers == [0, 0, 0, 0]
+    assert inter.compute_arm_scores([0.8, 0.2]) == [0.0, 0.0, 0.0, 0.0]
+
+
+def test_backend_standby_all_red_and_instant_wake():
+    """Verify empty intersections rest in Standby All-Red and snap straight to GREEN on demand arrival."""
+    env = CityNetworkEnv(max_steps=20)
+    empty_inter = IntersectionState("INT_1", INTERSECTIONS["INT_1"], initial_queues=[0.0, 0.0, 0.0, 0.0])
+    assert empty_inter.is_all_red is True
+    assert env._get_lights_state(empty_inter) == {"North": "RED", "South": "RED", "East": "RED", "West": "RED"}
+
+    # Step in standby with zero demand -> stays All-Red
+    empty_inter.apply_action(0, standby=True)
+    assert empty_inter.is_all_red is True
+    assert empty_inter.is_yellow is False
+    assert env._get_lights_state(empty_inter) == {"North": "RED", "South": "RED", "East": "RED", "West": "RED"}
+
+    # Demand arrives on West -> snaps straight to GREEN on West without extra amber/all-red delay
+    empty_inter.queues = np.array([0.0, 0.0, 0.0, 4.0], dtype=np.float32)
+    empty_inter.compute_arm_scores([0.8, 0.2])
+    empty_inter.apply_action(1, target_approach=3, standby=False)
+    assert empty_inter.is_all_red is False
+    assert empty_inter.is_yellow is False
+    assert empty_inter.active_approach == 3
+    assert env._get_lights_state(empty_inter) == {"North": "RED", "South": "RED", "East": "RED", "West": "GREEN"}
+
+    # Also verify CityNetworkEnv.step() initiates standby clearance when empty and snaps straight to GREEN on wake
+    env.reset()
+    int2 = env.intersections["INT_2"]
+    int2.queues = np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    int2.wait_timers = [0, 0, 0, 0]
+    int2.is_yellow = False
+    int2.is_all_red = False
+    # Step once while INT_2 queues are 0 -> CityNetworkEnv.step() selects standby=True and enters AMBER clearance
+    env.step()
+    assert int2.is_yellow is True and int2.target_approach is None, (
+        f"Expected standby clearance (is_yellow=True, target_approach=None), got is_yellow={int2.is_yellow}, target={int2.target_approach}"
+    )
+
+    # Place INT_2 in Standby All-Red, then inject West demand -> CityNetworkEnv.step() wakes straight to West GREEN
+    int2.is_yellow = False
+    int2.is_all_red = True
+    int2.all_red_timer = 0
+    int2.target_approach = None
+    int2.queues = np.array([0.0, 0.0, 0.0, 4.0], dtype=np.float32)
+    state, _, _, _ = env.step()
+    assert int2.is_all_red is False
+    assert int2.active_approach == 3
+    assert state["INT_2"]["lights"] == {"North": "RED", "South": "RED", "East": "RED", "West": "GREEN"}
+
+
+def test_backend_fast_gap_out_and_non_sequential_jump():
+    """Verify active empty arm gaps out before min_green and jumps directly N -> AMBER -> ALL-RED -> W."""
+    env = CityNetworkEnv(max_steps=20)
+    inter = IntersectionState("INT_1", INTERSECTIONS["INT_1"], initial_queues=[0.0, 0.0, 0.0, 6.0])
+    inter.active_approach = 0  # North currently GREEN
+    inter.target_approach = 0
+    inter.phase = 0
+    inter.phase_counter = 1  # Strictly below min_green (3)
+    inter.is_yellow = False
+    inter.is_all_red = False
+
+    visited_active = ["N"]
+    phases = []
+    # Step 1: fast gap-out must trigger AMBER immediately despite phase_counter < min_green
+    inter.compute_arm_scores([0.95, 0.05])
+    inter.apply_action(1, target_approach=3, standby=False)
+    assert inter.is_yellow is True, "Fast gap-out did not trigger AMBER immediately when active N was empty!"
+    assert inter.target_approach == 3
+    phases.append("AMBER")
+
+    # Step 2: AMBER -> ALL-RED
+    inter.apply_action(1, target_approach=3, standby=False)
+    assert inter.is_all_red is True and inter.is_yellow is False
+    assert all(col == "RED" for col in env._get_lights_state(inter).values())
+    phases.append("ALL-RED")
+
+    # Step 3: ALL-RED -> GREEN directly on West (non-sequential, skipping S and E)
+    inter.apply_action(1, target_approach=3, standby=False)
+    assert inter.is_all_red is False and inter.is_yellow is False
+    assert inter.active_approach == 3
+    assert env._get_lights_state(inter) == {"North": "RED", "South": "RED", "East": "RED", "West": "GREEN"}
+    visited_active.append("W")
+    phases.append("GREEN_W")
+
+    assert visited_active == ["N", "W"], f"Expected direct N -> W jump, visited {visited_active}"
+    assert phases == ["AMBER", "ALL-RED", "GREEN_W"], f"Unexpected transition phases: {phases}"
+
+    # Also verify CityNetworkEnv.step() end-to-end picks West directly from N when W=6.0 and N=0
+    env.reset()
+    j = env.intersections["INT_1"]
+    j.active_approach = 0
+    j.target_approach = 0
+    j.phase = 0
+    j.phase_counter = 1
+    j.is_yellow = False
+    j.is_all_red = False
+    j.queues = np.array([0.0, 0.0, 0.0, 6.0], dtype=np.float32)
+
+    seen_arms = ["N"]
+    saw_amber = False
+    saw_all_red = False
+    for _ in range(4):
+        state, _, _, _ = env.step()
+        d = state["INT_1"]
+        open_arms = [a for a, col in d["lights"].items() if col in ("GREEN", "AMBER")]
+        assert len(open_arms) <= 1, f"Violated <=1 invariant: {d['lights']}"
+        if d["lights"]["North"] == "AMBER":
+            saw_amber = True
+        if d["is_all_red"]:
+            saw_all_red = True
+        if d["active_arm"] is not None and d["active_arm"] not in seen_arms:
+            seen_arms.append(d["active_arm"])
+        if d["active_arm"] == "W" and d["lights"]["West"] == "GREEN":
+            break
+
+    assert saw_amber and saw_all_red, f"Missing AMBER ({saw_amber}) or ALL-RED ({saw_all_red}) clearance"
+    assert seen_arms == ["N", "W"], f"CityNetworkEnv.step() did not jump N -> W directly: {seen_arms}"

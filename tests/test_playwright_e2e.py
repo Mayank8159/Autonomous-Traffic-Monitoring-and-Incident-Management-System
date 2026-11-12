@@ -628,7 +628,7 @@ def run_e2e_tests():
 
                         if (lead.speed === 0 && trail.speed === 0) {
                             totalStoppedPairs++;
-                            if (distAhead < 27.9) {
+                            if (distAhead < 26.0) {
                                 violations.push({ type: 'gap_too_small', leadId: lead.id, trailId: trail.id, distAhead, euclideanDist });
                             }
                             if (euclideanDist < 26.0) {
@@ -1084,6 +1084,261 @@ def run_e2e_tests():
         page.screenshot(path=shot_fluid, full_page=False)
         assert os.path.exists(shot_fluid) and os.path.getsize(shot_fluid) > 20000
         print(f"[PASS] Fluid queue discharge screenshot saved to {shot_fluid} ({os.path.getsize(shot_fluid)} bytes)", flush=True)
+
+        # 7.12 Live Fleet Demand-Driven AI Probe: ZERO blank-road green > 2.0s while another arm waits
+        print("\n[E2E] Verifying Demand-Driven AI (no blank-road green > 2.0s while another arm waits, <=1 open arm, >=26px separation)...", flush=True)
+        page.evaluate("() => resetCitySimulation()")
+        page.wait_for_timeout(400)
+
+        blank_streak_start = {}
+        max_blank_green_sec = 0.0
+        live_invariant_violations = []
+        empty_arm_ai_wins = 0
+        probe_min_dist = 9999.0
+
+        for sample_idx in range(36):
+            probe = page.evaluate("""() => {
+                const nowMs = performance.now();
+                const demands = computeApproachDemands();
+                const juncs = {};
+                const invViolations = [];
+                let emptyWins = 0;
+
+                for (const [id, st] of Object.entries(junctionStates)) {
+                    const open = APPROACH_DIRS.filter(d => st.signals[d] === "green" || st.signals[d] === "amber");
+                    if (open.length > 1) {
+                        invViolations.push({ id, open, signals: { ...st.signals } });
+                    }
+                    const dArr = demands[id] || [0, 0, 0, 0];
+                    const activeIdx = st.activeArm ? APPROACH_DIRS.indexOf(st.activeArm) : -1;
+                    const activeLive = activeIdx >= 0 ? dArr[activeIdx] : 0;
+                    const otherHasWaiting = dArr.some((val, idx) => idx !== activeIdx && val > 0);
+                    const clearing = st.activeArm ? isArmClearingBox(id, st.activeArm) : false;
+                    const isActiveGreen = (!st.isStandby && !st.isAllRed && !st.isAmber && st.activeArm !== null);
+
+                    const p4 = st.lastDecision;
+                    if (p4 && !p4.isAllEmpty && p4.bestArm) {
+                        const bestIdx = APPROACH_DIRS.indexOf(p4.bestArm);
+                        if ((st.queues[bestIdx] || 0) < 0.08 && (dArr[bestIdx] || 0) <= 0) {
+                            emptyWins++;
+                        }
+                    }
+
+                    juncs[id] = {
+                        isBlankGreenWithWaiting: (isActiveGreen && activeLive === 0 && !clearing && otherHasWaiting && st.phaseTime >= 1.0),
+                        activeArm: st.activeArm,
+                        phaseTime: st.phaseTime,
+                        activeLive,
+                        demands: dArr
+                    };
+                }
+
+                let minDist = 9999.0;
+                for (let i = 0; i < vehicles.length; i++) {
+                    for (let j = i + 1; j < vehicles.length; j++) {
+                        const dist = Math.hypot(vehicles[j].x - vehicles[i].x, vehicles[j].y - vehicles[i].y);
+                        if (dist < minDist) minDist = dist;
+                    }
+                }
+
+                return { nowMs, juncs, invViolations, emptyWins, minDist };
+            }""")
+
+            now_s = probe["nowMs"] / 1000.0
+            live_invariant_violations.extend(probe["invViolations"])
+            empty_arm_ai_wins += probe["emptyWins"]
+            probe_min_dist = min(probe_min_dist, probe["minDist"])
+
+            for jid, jinfo in probe["juncs"].items():
+                if jinfo["isBlankGreenWithWaiting"]:
+                    if jid not in blank_streak_start:
+                        blank_streak_start[jid] = now_s
+                    else:
+                        max_blank_green_sec = max(max_blank_green_sec, now_s - blank_streak_start[jid])
+                else:
+                    blank_streak_start.pop(jid, None)
+
+            page.wait_for_timeout(250)
+
+        print(f"[E2E] Demand-driven probe: max blank-road green={max_blank_green_sec:.2f}s, empty-arm AI wins={empty_arm_ai_wins}, min separation={probe_min_dist:.2f}px", flush=True)
+        assert len(live_invariant_violations) == 0, f"<=1 open arm invariant violated during live probe: {live_invariant_violations}"
+        assert empty_arm_ai_wins == 0, f"AI selected an empty arm {empty_arm_ai_wins} times!"
+        assert max_blank_green_sec <= 2.0, f"Junction held blank-road green for {max_blank_green_sec:.2f}s (> 2.0s) while another arm had waiting vehicles!"
+        assert probe_min_dist >= 26.0, f"Inter-vehicle overlap detected during live probe: {probe_min_dist:.2f}px < 26.0px"
+        print("[PASS] Live demand-driven AI verified: 0 blank-road greens > 2.0s, 0 empty-arm wins, <=1 open arm, >=26px separation.", flush=True)
+
+        # 7.13 Standby All-Red on Empty Map + Instant Green Wake-Up on Vehicle Arrival
+        print("\n[E2E] Verifying Standby All-Red when empty & instant GREEN wake-up on vehicle arrival...", flush=True)
+        standby_res = page.evaluate("""() => {
+            vehicles = [];
+            activeIncidents = [];
+            emergencyPreemptionCorridor = [];
+            initializeJunctionsFromDemands();
+            updateTrafficSignals(0.25);
+
+            selectedJunctionId = "INT_2";
+            updateInspectorUI();
+
+            const initSummary = {};
+            let allStandby = true;
+            for (const [id, st] of Object.entries(junctionStates)) {
+                const allRed = APPROACH_DIRS.every(d => st.signals[d] === "red");
+                if (!st.isStandby || !st.isAllRed || st.activeArm !== null || !allRed) {
+                    allStandby = false;
+                }
+                initSummary[id] = { isStandby: st.isStandby, isAllRed: st.isAllRed, activeArm: st.activeArm, signals: { ...st.signals } };
+            }
+
+            const recText = document.getElementById("aiRecText")?.textContent || "";
+            const confText = document.getElementById("aiConfText")?.textContent || "";
+            const emptyPolicy = evaluate4ArmRLPolicy({
+                queues: [0, 0, 0, 0],
+                activeArm: null,
+                armWaitTimes: { N: 0, S: 0, E: 0, W: 0 },
+                isAllRed: true
+            });
+
+            // Spawn a single vehicle approaching INT_2 from West (H1, dir=+1)
+            const j2 = INTERSECTIONS["INT_2"];
+            vehicles.push({
+                id: 9901,
+                type: "sedan",
+                color: "#3b82f6",
+                corridorId: "H1",
+                direction: 1,
+                x: j2.x - 100,
+                y: CORRIDORS["H1"].y + 16,
+                speed: 0.0,
+                accel: 0.0,
+                targetSpeed: 1.0,
+                heading: 0,
+                length: 20,
+                isBraking: true,
+                isEmergency: false,
+                state: "CRUISING",
+                nextIntersection: "INT_2"
+            });
+
+            // Single update must wake INT_2 straight to W GREEN without amber/all-red delay
+            updateTrafficSignals(0.05);
+            const st2 = junctionStates["INT_2"];
+            const othersStillStandby = Object.entries(junctionStates)
+                .filter(([id]) => id !== "INT_2")
+                .every(([, st]) => st.isStandby && st.isAllRed && APPROACH_DIRS.every(d => st.signals[d] === "red"));
+
+            return {
+                allStandby,
+                initSummary,
+                recText,
+                confText,
+                emptyPolicy,
+                wakeInt2: {
+                    isStandby: st2.isStandby,
+                    isAllRed: st2.isAllRed,
+                    isAmber: st2.isAmber,
+                    activeArm: st2.activeArm,
+                    signals: { ...st2.signals }
+                },
+                othersStillStandby
+            };
+        }""")
+
+        assert standby_res["allStandby"], f"Empty junctions failed to rest in Standby All-Red: {standby_res['initSummary']}"
+        assert "STANDBY (ALL CLEAR)" in standby_res["recText"], f"Expected 'STANDBY (ALL CLEAR)' in Inspector, got '{standby_res['recText']}'"
+        assert "0%" in standby_res["confText"] and "Standby" in standby_res["confText"], f"Unexpected Standby confidence readout: '{standby_res['confText']}'"
+        assert standby_res["emptyPolicy"]["isAllEmpty"] and standby_res["emptyPolicy"]["bestArm"] is None, f"Empty policy should return isAllEmpty: {standby_res['emptyPolicy']}"
+        assert not standby_res["wakeInt2"]["isStandby"] and not standby_res["wakeInt2"]["isAllRed"] and not standby_res["wakeInt2"]["isAmber"], \
+            f"INT_2 did not snap straight to GREEN on arrival: {standby_res['wakeInt2']}"
+        assert standby_res["wakeInt2"]["activeArm"] == "W" and standby_res["wakeInt2"]["signals"] == {"N": "red", "S": "red", "E": "red", "W": "green"}, \
+            f"Expected W GREEN on wake-up, got {standby_res['wakeInt2']}"
+        assert standby_res["othersStillStandby"], "Other empty junctions woke up spuriously!"
+        print("[PASS] Standby All-Red & instant GREEN wake-up verified (0% Standby -> W GREEN on arrival).", flush=True)
+
+        # 7.14 Non-Sequential Jump & Instant Gap-Out (N -> amber -> all-red -> W)
+        print("\n[E2E] Verifying Instant Gap-Out & Non-Sequential AI Jump (N -> amber -> all-red -> W)...", flush=True)
+        jump_res = page.evaluate("""() => {
+            const j2 = INTERSECTIONS["INT_2"];
+            vehicles = [];
+            for (let k = 0; k < 4; k++) {
+                vehicles.push({
+                    id: 9910 + k,
+                    type: "sedan",
+                    color: "#3b82f6",
+                    corridorId: "H1",
+                    direction: 1,
+                    x: j2.x - 50 - (k * 30),
+                    y: CORRIDORS["H1"].y + 16,
+                    speed: 0.0,
+                    accel: 0.0,
+                    targetSpeed: 1.0,
+                    heading: 0,
+                    length: 20,
+                    isBraking: true,
+                    isEmergency: false,
+                    state: "CRUISING",
+                    nextIntersection: "INT_2"
+                });
+            }
+
+            const st = junctionStates["INT_2"];
+            st.manualOverride = null;
+            st.isStandby = false;
+            st.isAllRed = false;
+            st.isAmber = false;
+            st.activeArm = "N";
+            st.targetArm = "N";
+            st.phase = 0;
+            st.phaseTime = 1.1; // strictly below minGreen (8.5s), >= 1.0s gap-out threshold
+            st.nextInferenceTimer = 0.0;
+            st.armWaitTimes = { N: 0, S: 0, E: 0, W: 0 };
+            st.queues = [0, 0, 0, 4.0];
+            enforceSingleSignalInvariant(st);
+
+            const visitedArms = ["N"];
+            const invViolations = [];
+            let gapOutTriggeredImmediately = false;
+            let sawAmber = false;
+            let sawAllRed = false;
+
+            for (let step = 0; step < 50; step++) {
+                updateTrafficSignals(0.25);
+                const open = APPROACH_DIRS.filter(d => st.signals[d] === "green" || st.signals[d] === "amber");
+                if (open.length > 1) {
+                    invViolations.push({ step, open, signals: { ...st.signals } });
+                }
+                if (step === 0 && st.isAmber && st.targetArm === "W") {
+                    gapOutTriggeredImmediately = true;
+                }
+                if (st.isAmber && st.targetArm === "W") sawAmber = true;
+                if (st.isAllRed && st.targetArm === "W") sawAllRed = true;
+                if (st.activeArm && !visitedArms.includes(st.activeArm)) {
+                    visitedArms.push(st.activeArm);
+                }
+                if (!st.isAmber && !st.isAllRed && st.activeArm === "W" && st.signals.W === "green") {
+                    break;
+                }
+            }
+
+            return {
+                gapOutTriggeredImmediately,
+                sawAmber,
+                sawAllRed,
+                visitedArms,
+                invViolations,
+                finalSignals: { ...st.signals }
+            };
+        }""")
+
+        # Restore clean city simulation after isolated state checks
+        page.evaluate("() => resetCitySimulation()")
+        page.wait_for_timeout(300)
+
+        assert len(jump_res["invViolations"]) == 0, f"<=1 open arm invariant violated during N->W jump: {jump_res['invViolations']}"
+        assert jump_res["gapOutTriggeredImmediately"], f"Instant gap-out failed when active N was empty at phaseTime=1.1s: {jump_res}"
+        assert jump_res["sawAmber"] and jump_res["sawAllRed"], f"Missing AMBER or ALL-RED clearance during N->W jump: {jump_res}"
+        assert jump_res["visitedArms"] == ["N", "W"], f"Expected non-sequential jump ['N', 'W'] (no S/E cycling), got {jump_res['visitedArms']}"
+        assert jump_res["finalSignals"] == {"N": "red", "S": "red", "E": "red", "W": "green"}, f"Expected W GREEN, got {jump_res['finalSignals']}"
+        print("[PASS] Instant Gap-Out & Non-Sequential Jump verified: N -> amber -> all-red -> W (skipped S/E).", flush=True)
 
         # Check Console Errors, Uncaught Page Exceptions, and Failed Network Requests
         print(f"\n[E2E] Total console logs recorded: {len(console_logs)}", flush=True)
