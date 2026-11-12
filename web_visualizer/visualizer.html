@@ -1083,7 +1083,7 @@
                     </div>
                     <div class="panel-body">
                         <div style="position:relative; width:100%; min-height:280px; background:#000; border-radius:12px; overflow:hidden;">
-                            <video id="cctvVideo" playsinline controls muted style="width:100%; height:auto; display:block;"></video>
+                            <video id="cctvVideo" playsinline controls muted loop autoplay style="width:100%; height:auto; display:block;"></video>
                             <canvas id="cctvOverlay" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></canvas>
                         </div>
                     </div>
@@ -2517,9 +2517,9 @@
                     for (let j = 0; j < vehicles.length; j++) {
                         if (i === j) continue;
                         const other = vehicles[j];
-                        // Inner intersection conflict zone (< 24px from center, well clear of cross-street stop bars at 38px)
-                        if (Math.abs(other.x - junc.x) < 24 && Math.abs(other.y - junc.y) < 24) {
-                            if (other.state === "TURNING" || (other.corridorId !== v.corridorId && other.speed > 0.05)) {
+                        // Inner intersection conflict zone (< 32px from center, well clear of cross-street stop bars at 38px)
+                        if (Math.abs(other.x - junc.x) < 32 && Math.abs(other.y - junc.y) < 32) {
+                            if (other.state === "TURNING" || (other.corridorId !== v.corridorId && other.speed > 0.04)) {
                                 mustYieldIntersection = true;
                                 break;
                             }
@@ -3060,7 +3060,7 @@
                         state.lastInferenceTime = (t1 - t0);
 
                         // Dynamic Demand & Queue Relief:
-                        // When North & South queues are heavy (like 24.5), immediately select Action 0 (NS Green)!
+                        // When North & South queues are heavy, immediately select Action 0 (NS Green)!
                         // When East & West queues are heavy, select Action 1 (EW Green)!
                         let chosenAction = policyOut.action;
                         const nsQ = qs[0] + qs[1];
@@ -3071,10 +3071,16 @@
                             chosenAction = 1;
                         }
 
-                        // Actuate phase transition when minimum green holding time (>= 8.0s) has elapsed
+                        // Actuate phase transition when minimum green holding time has elapsed
+                        // CRITICAL CONGESTION: bypass minHold entirely when one axis is saturated (>= 20 vehicles)
+                        // and the other is nearly empty (< 4 vehicles) — no point waiting, switch NOW!
+                        const isCriticalCongestion = (state.phase === 0 && ewQ >= 20 && nsQ < 4) ||
+                                                     (state.phase === 1 && nsQ >= 20 && ewQ < 4);
                         const isSevereCongestion = (state.phase === 0 && ewQ > 16 && nsQ < 6) ||
                                                    (state.phase === 1 && nsQ > 16 && ewQ < 6);
-                        const minHold = isSevereCongestion ? Math.max(8.0, state.minGreen * 0.8) : state.minGreen;
+                        const minHold = isCriticalCongestion ? 5.0
+                                      : isSevereCongestion   ? Math.max(6.0, state.minGreen * 0.65)
+                                      : state.minGreen;
 
                         if (chosenAction !== state.phase && state.phaseTime >= minHold) {
                             state.isAmber = true;
@@ -5046,8 +5052,93 @@
             if (!file) return;
             const url = URL.createObjectURL(file);
             cctvVideo.src = url;
-            cctvVideo.play();
+            cctvVideo.loop = true;
+            cctvVideo.muted = true;
+            cctvVideo.play().catch(() => {});
+            // Also upload to server for processing + persistence
+            const formData = new FormData();
+            formData.append('video', file);
+            fetch('/api/process_video', {
+                method: 'POST',
+                headers: { 'X-Filename': file.name, 'Content-Length': file.size },
+                body: file
+            }).then(r => r.json()).then(resp => {
+                if (resp.started) {
+                    logDispatchEvent('CCTV', `Video '${file.name}' uploaded & processing started on server.`);
+                    pollCCTVJobStatus();
+                }
+            }).catch(() => {
+                logDispatchEvent('CCTV', `Video loaded locally (server upload skipped).`);
+            });
             drawSampleCCTVDetections();
+            startCCTVOverlayLoop();
+        }
+
+        // Auto-load last uploaded video from server on page load
+        function checkServerVideo() {
+            // First check the dedicated video status endpoint
+            fetch('/api/video/status').then(r => r.json()).then(resp => {
+                if (resp.available && resp.url && !cctvVideo.src) {
+                    const videoUrl = resp.prepared_url || resp.url;
+                    cctvVideo.src = videoUrl;
+                    cctvVideo.loop = true;
+                    cctvVideo.play().catch(() => {});
+                    logDispatchEvent('CCTV', `Auto-loaded previous session video: ${videoUrl}`);
+                    drawSampleCCTVDetections();
+                    startCCTVOverlayLoop();
+                }
+            }).catch(() => {
+                // Fallback: check /api/status for job result video
+                fetch('/api/status').then(r => r.json()).then(resp => {
+                    if (resp.job && resp.job.state === 'done' && resp.job.result && resp.job.result.video_metadata) {
+                        const videoUrl = resp.job.result.video_metadata.video_url;
+                        if (videoUrl && !cctvVideo.src) {
+                            cctvVideo.src = videoUrl;
+                            cctvVideo.loop = true;
+                            cctvVideo.play().catch(() => {});
+                            logDispatchEvent('CCTV', `Auto-loaded previous session video from server.`);
+                            drawSampleCCTVDetections();
+                            startCCTVOverlayLoop();
+                        }
+                    }
+                }).catch(() => {});
+            });
+        }
+
+        // Poll server job status for CCTV processing updates
+        function pollCCTVJobStatus() {
+            const interval = setInterval(() => {
+                fetch('/api/status').then(r => r.json()).then(resp => {
+                    if (resp.job && resp.job.state === 'done') {
+                        clearInterval(interval);
+                        logDispatchEvent('CCTV', `Server processing complete — detection results ready.`);
+                        if (resp.job.result && resp.job.result.video_metadata && resp.job.result.video_metadata.video_url) {
+                            const serverUrl = resp.job.result.video_metadata.video_url;
+                            if (!cctvVideo.src || cctvVideo.src.startsWith('blob:')) {
+                                cctvVideo.src = serverUrl;
+                                cctvVideo.loop = true;
+                                cctvVideo.play().catch(() => {});
+                            }
+                        }
+                    } else if (resp.job && resp.job.state === 'error') {
+                        clearInterval(interval);
+                        logDispatchEvent('CCTV', `Server processing error: ${resp.job.error}`);
+                    }
+                }).catch(() => clearInterval(interval));
+            }, 2000);
+        }
+
+        // Animated CCTV detection overlay loop
+        let cctvOverlayActive = false;
+        function startCCTVOverlayLoop() {
+            if (cctvOverlayActive) return;
+            cctvOverlayActive = true;
+            function drawLoop() {
+                if (!cctvOverlayActive) return;
+                drawSampleCCTVDetections();
+                setTimeout(drawLoop, 800 + Math.random() * 400);
+            }
+            drawLoop();
         }
 
         function drawSampleCCTVDetections() {
@@ -5055,27 +5146,64 @@
             cctvCanvas.height = cctvVideo.clientHeight || 280;
             cCtx.clearRect(0, 0, cctvCanvas.width, cctvCanvas.height);
 
-            cCtx.strokeStyle = "#38bdf8";
-            cCtx.lineWidth = 2;
-            cCtx.strokeRect(100, 80, 60, 40);
-            cCtx.fillStyle = "#38bdf8";
-            cCtx.fillText("#102 CAR 92%", 100, 75);
+            // Simulated tracked vehicle detections with realistic jitter
+            const W = cctvCanvas.width, H = cctvCanvas.height;
+            const detections = [
+                { id: 102, label: "CAR",   conf: 92, x: 0.22 + Math.sin(Date.now() * 0.0005) * 0.03, y: 0.35, w: 0.14, h: 0.09, color: "#38bdf8" },
+                { id: 215, label: "TRUCK", conf: 88, x: 0.56 + Math.cos(Date.now() * 0.0003) * 0.04, y: 0.52, w: 0.18, h: 0.11, color: "#f59e0b" },
+                { id: 318, label: "CAR",   conf: 95, x: 0.70,                                          y: 0.28 + Math.sin(Date.now() * 0.0007) * 0.04, w: 0.13, h: 0.08, color: "#38bdf8" },
+                { id: 441, label: "MOTO",  conf: 79, x: 0.38,                                          y: 0.68, w: 0.07, h: 0.06, color: "#a78bfa" },
+            ];
 
+            cCtx.font = "bold 10px 'Share Tech Mono', monospace";
+            detections.forEach(det => {
+                const rx = det.x * W, ry = det.y * H, rw = det.w * W, rh = det.h * H;
+                // Bounding box
+                cCtx.strokeStyle = det.color;
+                cCtx.lineWidth = 2;
+                cCtx.strokeRect(rx, ry, rw, rh);
+                // Corner ticks
+                const tk = 8;
+                cCtx.lineWidth = 2.5;
+                [[rx,ry],[rx+rw,ry],[rx,ry+rh],[rx+rw,ry+rh]].forEach(([cx,cy],idx) => {
+                    const sx = idx % 2 === 0 ? 1 : -1;
+                    const sy = idx < 2 ? 1 : -1;
+                    cCtx.beginPath(); cCtx.moveTo(cx, cy + sy*tk); cCtx.lineTo(cx, cy); cCtx.lineTo(cx + sx*tk, cy); cCtx.stroke();
+                });
+                // Label
+                cCtx.fillStyle = det.color + "cc";
+                cCtx.fillRect(rx, ry - 16, 90, 15);
+                cCtx.fillStyle = "#0f172a";
+                cCtx.fillText(`#${det.id} ${det.label} ${det.conf}%`, rx + 3, ry - 4);
+            });
+
+            // Update occupancy heatmap
             const imgData = occCtx.createImageData(64, 64);
-            for (let i = 0; i < 64 * 64 * 4; i += 4) {
-                const val = Math.floor(Math.random() * 200);
-                imgData.data[i] = val;
-                imgData.data[i + 1] = Math.floor(val * 0.4);
-                imgData.data[i + 2] = 255 - val;
-                imgData.data[i + 3] = 255;
+            const t = Date.now() * 0.001;
+            for (let py = 0; py < 64; py++) {
+                for (let px = 0; px < 64; px++) {
+                    const i = (py * 64 + px) * 4;
+                    const nx = px / 64, ny = py / 64;
+                    const density = Math.max(0, Math.sin(nx * 8 + t) * Math.cos(ny * 6 - t * 0.7) * 0.5 + 0.5);
+                    imgData.data[i]   = Math.floor(density * 20);
+                    imgData.data[i+1] = Math.floor(density * 180);
+                    imgData.data[i+2] = Math.floor(255 - density * 180);
+                    imgData.data[i+3] = 220;
+                }
             }
             occCtx.putImageData(imgData, 0, 0);
 
-            document.getElementById("cctvN").textContent = "3.4";
-            document.getElementById("cctvS").textContent = "4.1";
-            document.getElementById("cctvE").textContent = "2.8";
-            document.getElementById("cctvW").textContent = "5.0";
-            document.getElementById("cctvTrackCount").textContent = "14";
+            // Update queue readouts with slight random variation
+            const juncIds = Object.keys(junctionStates);
+            const refId = juncIds[1] || juncIds[0];
+            if (refId && junctionStates[refId]) {
+                const qs = junctionStates[refId].queues;
+                document.getElementById("cctvN").textContent = (qs[0] + Math.random() * 0.2).toFixed(1);
+                document.getElementById("cctvS").textContent = (qs[1] + Math.random() * 0.2).toFixed(1);
+                document.getElementById("cctvE").textContent = (qs[2] + Math.random() * 0.2).toFixed(1);
+                document.getElementById("cctvW").textContent = (qs[3] + Math.random() * 0.2).toFixed(1);
+            }
+            document.getElementById("cctvTrackCount").textContent = detections.length + Math.floor(Math.random() * 3);
         }
 
         // Initialize Everything on Load
@@ -5083,6 +5211,7 @@
             resizeCanvases();
             initVehicles();
             updateInspectorUI();
+            checkServerVideo();
             requestAnimationFrame(simulationLoop);
         });
     </script>

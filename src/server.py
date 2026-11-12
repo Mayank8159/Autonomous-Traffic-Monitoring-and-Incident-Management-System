@@ -339,6 +339,28 @@ class ATMSRequestHandler(SimpleHTTPRequestHandler):
             self._send_json_response(state_data)
             return
 
+        # Video status endpoint — returns whether a prepared video is available for playback
+        if path == "/api/video/status":
+            uploads_dir = os.path.join(ROOT_DIR, "uploads")
+            prepared = os.path.join(uploads_dir, "prepared.mp4")
+            candidates = []
+            if os.path.isdir(uploads_dir):
+                for f in os.listdir(uploads_dir):
+                    if f.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
+                        fp = os.path.join(uploads_dir, f)
+                        candidates.append((os.path.getmtime(fp), f))
+            candidates.sort(reverse=True)
+            if candidates:
+                latest = candidates[0][1]
+                self._send_json_response({
+                    "available": True,
+                    "url": f"/uploads/{latest}",
+                    "prepared_url": "/uploads/prepared.mp4" if os.path.exists(prepared) else None,
+                })
+            else:
+                self._send_json_response({"available": False, "url": None, "prepared_url": None})
+            return
+
         super().do_GET()
 
     def do_POST(self):
