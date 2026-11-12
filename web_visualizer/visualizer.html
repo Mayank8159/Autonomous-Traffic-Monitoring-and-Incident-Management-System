@@ -1921,27 +1921,61 @@
         function initVehicles() {
             vehicles = [];
             const corridorIds = Object.keys(CORRIDORS);
-            const numVehicles = 88;
+            const numVehicles = 44;
 
             for (let i = 0; i < numVehicles; i++) {
                 const cId = corridorIds[i % corridorIds.length];
+                const corr = CORRIDORS[cId];
                 const dir = (Math.random() > 0.5) ? 1 : -1;
-                const isH = CORRIDORS[cId].isHorizontal;
+                const isH = corr.isHorizontal;
                 const maxCoord = isH ? CITY_WIDTH : CITY_HEIGHT;
 
-                let bestPos = Math.random() * maxCoord;
-                for (let attempt = 0; attempt < 30; attempt++) {
-                    const cand = 40 + Math.random() * (maxCoord - 80);
-                    const collision = vehicles.some(v => {
+                const juncPositions = corr.intersections.map(jId => {
+                    const j = INTERSECTIONS[jId];
+                    return isH ? j.x : j.y;
+                });
+
+                let bestPos = 80;
+                let foundSafePos = false;
+
+                // Safe Spawning: vehicles must spawn with at least 60px headway and NEVER spawn inside an intersection box (|pos - junc.pos| > 55px)
+                for (let attempt = 0; attempt < 200; attempt++) {
+                    const cand = 60 + Math.random() * (maxCoord - 120);
+
+                    // Must NEVER spawn inside an intersection box (|pos - junc.pos| <= 55px)
+                    const insideJunction = juncPositions.some(jp => Math.abs(cand - jp) <= 55);
+                    if (insideJunction) continue;
+
+                    // Must have at least 60px headway from vehicles in same corridor and direction
+                    const tooClose = vehicles.some(v => {
                         if (v.corridorId !== cId || v.direction !== dir) return false;
                         const existingPos = isH ? v.x : v.y;
-                        return Math.abs(existingPos - cand) < 36;
+                        return Math.abs(existingPos - cand) < 60;
                     });
-                    if (!collision) {
+                    if (!tooClose) {
                         bestPos = cand;
+                        foundSafePos = true;
                         break;
                     }
                 }
+
+                if (!foundSafePos) {
+                    for (let cand = 60; cand < maxCoord - 60; cand += 12) {
+                        const insideJunction = juncPositions.some(jp => Math.abs(cand - jp) <= 55);
+                        if (insideJunction) continue;
+                        const tooClose = vehicles.some(v => {
+                            if (v.corridorId !== cId || v.direction !== dir) return false;
+                            const existingPos = isH ? v.x : v.y;
+                            return Math.abs(existingPos - cand) < 60;
+                        });
+                        if (!tooClose) {
+                            bestPos = cand;
+                            foundSafePos = true;
+                            break;
+                        }
+                    }
+                }
+
                 vehicles.push(createCorridorVehicle(cId, dir, bestPos));
             }
         }
@@ -1973,8 +2007,8 @@
             const length = isBus ? 30 : (isVan ? 22 : (isSuv ? 18 : 15.5));
             const width = isBus ? 10 : (isVan ? 9.5 : (isSuv ? 9 : 8));
             const height = isBus ? 8.5 : (isVan ? 7.5 : (isSuv ? 6.5 : 5.5));
-            // Default vehicle speeds scaled down ~40% for realistic, observable traffic kinematics
-            const targetSpeed = 0.85 + Math.random() * 0.45;
+            // Slower, observable pace: targetSpeed = 0.85 to 1.25 px/frame
+            const targetSpeed = 0.85 + Math.random() * 0.40;
 
             const v = {
                 id: Math.floor(Math.random() * 90000) + 10000,
@@ -2233,7 +2267,7 @@
                         const other = vehicles[j];
                         const dToLook = Math.hypot(other.x - lookPt.x, other.y - lookPt.y);
                         const dToSelf = Math.hypot(other.x - v.x, other.y - v.y);
-                        if (dToLook < 24 || (dToSelf < 28 && other.turnProgress !== undefined && other.turnProgress > v.turnProgress)) {
+                        if (dToLook < 28 || (dToSelf < 28 && other.turnProgress !== undefined && other.turnProgress > v.turnProgress)) {
                             turnBlocked = true;
                             leadTurnSpeed = Math.min(leadTurnSpeed, other.speed);
                             break;
@@ -2241,7 +2275,7 @@
                     }
 
                     if (turnBlocked) {
-                        v.speed = Math.max(0, Math.min(v.speed - 0.08 * dtNorm, leadTurnSpeed * 0.8));
+                        v.speed = Math.max(0, Math.min(v.speed - 0.12 * dtNorm, leadTurnSpeed * 0.7));
                         v.isBraking = true;
                     } else {
                         v.speed = Math.min(v.targetSpeed * 0.85, v.speed + 0.04 * dtNorm);
@@ -2255,12 +2289,18 @@
 
                     if (v.turnProgress >= 1.0) {
                         v.turnProgress = 1.0;
-                        v.x = tc.pEnd.x;
-                        v.y = tc.pEnd.y;
                         v.corridorId = tc.nextCorridorId;
                         v.direction = tc.nextDirection;
                         v.heading = tc.nextHeading;
-                        v.streetName = CORRIDORS[v.corridorId]?.name || "Arterial";
+                        const nextCorr = CORRIDORS[v.corridorId];
+                        if (nextCorr.isHorizontal) {
+                            v.x = tc.pEnd.x;
+                            v.y = (v.direction === 1) ? nextCorr.y + 16 : nextCorr.y - 16;
+                        } else {
+                            v.x = (v.direction === 1) ? nextCorr.x - 16 : nextCorr.x + 16;
+                            v.y = tc.pEnd.y;
+                        }
+                        v.streetName = nextCorr?.name || "Arterial";
                         v.state = "CRUISING";
                         v.turnCurve = null;
                         v.nextManeuver = "proceed";
@@ -2295,9 +2335,18 @@
                     continue;
                 }
 
-                // 3. CRUISING STATE: IDM CAR-FOLLOWING & INTERSECTION CHECK
+                // 3. CRUISING STATE: STRICT LANE DISCIPLINE & IDM CAR-FOLLOWING
                 const corr = CORRIDORS[v.corridorId];
                 if (!corr) continue;
+
+                // Strict Lane Discipline: Cruising and queuing cars MUST stay exactly on their lane axis!
+                if (corr.isHorizontal) {
+                    v.y = (v.direction === 1) ? corr.y + 16 : corr.y - 16;
+                    v.heading = (v.direction === 1) ? 0 : Math.PI;
+                } else {
+                    v.x = (v.direction === 1) ? corr.x - 16 : corr.x + 16;
+                    v.heading = (v.direction === 1) ? Math.PI / 2 : -Math.PI / 2;
+                }
 
                 if (!v.nextIntersection) {
                     findNextIntersection(v);
@@ -2317,18 +2366,15 @@
                         distToJuncCenter = (junc.y - v.y) * v.direction;
                     }
 
+                    // Stop line is at distToJuncCenter = 38px
                     stopLineDist = distToJuncCenter - 38;
 
                     // Real-time authoritative signal state: Green, Amber, or All-Red
                     const sig = getJunctionSignal(juncState, corr.isHorizontal);
                     isSignalRedOrAmber = (sig !== "green");
 
-                    if (emergencyPreemptionCorridor.includes(v.nextIntersection)) {
-                        isSignalRedOrAmber = false;
-                    }
-
-                    // Turn initiation check: within turn approach zone and signal green
-                    if (distToJuncCenter <= 30 && distToJuncCenter >= 10 && !isSignalRedOrAmber) {
+                    // Turn initiation check: only if signal is GREEN and no vehicle blocks turn path
+                    if (distToJuncCenter <= 32 && distToJuncCenter >= 10 && !isSignalRedOrAmber) {
                         if (!v.turnPlanned) {
                             planIntersectionManeuver(v);
                             v.turnPlanned = true;
@@ -2337,11 +2383,28 @@
                         if (v.nextManeuver !== "straight") {
                             const curve = buildTurnCurve(v, v.nextIntersection, v.nextManeuver);
                             if (curve) {
-                                v.state = "TURNING";
-                                v.turnCurve = curve;
-                                v.turnProgress = 0.0;
-                                v.turnPlanned = false;
-                                continue;
+                                // Vehicles only turn if signal is green and no vehicle is currently blocking the turn path
+                                let pathBlocked = false;
+                                for (let t = 0.2; t <= 1.0; t += 0.25) {
+                                    const pt = evalCurvePoint(curve, t);
+                                    for (let j = 0; j < vehicles.length; j++) {
+                                        if (i === j) continue;
+                                        const other = vehicles[j];
+                                        if (Math.hypot(other.x - pt.x, other.y - pt.y) < 28) {
+                                            pathBlocked = true;
+                                            break;
+                                        }
+                                    }
+                                    if (pathBlocked) break;
+                                }
+
+                                if (!pathBlocked) {
+                                    v.state = "TURNING";
+                                    v.turnCurve = curve;
+                                    v.turnProgress = 0.0;
+                                    v.turnPlanned = false;
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -2420,7 +2483,7 @@
                     }
                 }
 
-                // Intersection entry yielding: vehicles approaching an intersection must yield if another conflicting vehicle is inside the inner box
+                // Intersection entry yielding: vehicles approaching an intersection yield if conflicting vehicle is inside inner conflict zone
                 let mustYieldIntersection = false;
                 if (v.nextIntersection && distToJuncCenter > 0 && distToJuncCenter < 65) {
                     const junc = INTERSECTIONS[v.nextIntersection];
@@ -2429,7 +2492,6 @@
                         const other = vehicles[j];
                         // Inner intersection conflict zone (< 24px from center, well clear of cross-street stop bars at 38px)
                         if (Math.abs(other.x - junc.x) < 24 && Math.abs(other.y - junc.y) < 24) {
-                            // Only yield to vehicles actively turning or moving through the box, NOT stationary cars queued at red lights
                             if (other.state === "TURNING" || (other.corridorId !== v.corridorId && other.speed > 0.05)) {
                                 mustYieldIntersection = true;
                                 break;
@@ -2438,76 +2500,61 @@
                     }
                 }
 
-                // Lead vehicle tracking & 2D Collision Avoidance
-                // Check distance to lead vehicle in the same corridor & 2D travel cone
+                // Lead Vehicle Detection: STRICTLY within SAME corridor and SAME direction!
+                // NEVER consider cross-street cars stopped at red lights as lead vehicles!
                 let minLeadDist = 9999;
                 let leadSpeed = v.targetSpeed;
-                let proximityDanger = false;
-
-                const cosH = Math.cos(v.heading);
-                const sinH = Math.sin(v.heading);
+                let leadVehicle = null;
 
                 for (let j = 0; j < vehicles.length; j++) {
                     if (i === j) continue;
                     const other = vehicles[j];
 
-                    const dx = other.x - v.x;
-                    const dy = other.y - v.y;
-                    const dist = Math.hypot(dx, dy);
-
-                    // Longitudinal (forward) and lateral (sideways) displacement in vehicle local frame
-                    const fwdDist = dx * cosH + dy * sinH;
-                    const sideDist = Math.abs(-dx * sinH + dy * cosH);
-
-                    // 1. Same-corridor car following
-                    if (other.corridorId === v.corridorId && other.direction === v.direction) {
-                        let distAhead;
-                        if (corr.isHorizontal) {
-                            distAhead = (other.x - v.x) * v.direction;
-                        } else {
-                            distAhead = (other.y - v.y) * v.direction;
-                        }
-
-                        if (distAhead > 0 && distAhead < minLeadDist) {
-                            minLeadDist = distAhead;
-                            leadSpeed = other.speed;
-                        }
+                    // STRICTLY same corridor and same direction
+                    if (other.corridorId !== v.corridorId || other.direction !== v.direction) {
+                        continue;
                     }
 
-                    // 2. 2D Collision Avoidance & Travel Cone (turning vehicles, merging vehicles, crossing vehicles)
-                    // (NOTE: Removed old `if (other.state === "TURNING") continue;` so cruising cars never drive through turning cars!)
-                    if (fwdDist > 0 && fwdDist < 120 && sideDist < 20) {
-                        const effectiveDist = Math.max(1, fwdDist - 12);
-                        if (effectiveDist < minLeadDist) {
-                            minLeadDist = effectiveDist;
-                            leadSpeed = Math.min(leadSpeed, other.speed);
-                        }
+                    // If other is turning and has cleared our lane axis, ignore it
+                    if (other.state === "TURNING") {
+                        if (corr.isHorizontal && Math.abs(other.y - v.y) > 15) continue;
+                        if (!corr.isHorizontal && Math.abs(other.x - v.x) > 15) continue;
                     }
 
-                    // 3. Proximity Danger Check (radial distance r < 35px ahead)
-                    if (dist < 35 && fwdDist > 0 && sideDist < 22) {
-                        proximityDanger = true;
-                        leadSpeed = Math.min(leadSpeed, other.speed);
+                    let distAhead;
+                    if (corr.isHorizontal) {
+                        distAhead = (other.x - v.x) * v.direction;
+                    } else {
+                        distAhead = (other.y - v.y) * v.direction;
+                    }
+
+                    if (distAhead > 0 && distAhead < minLeadDist) {
+                        minLeadDist = distAhead;
+                        leadSpeed = other.speed;
+                        leadVehicle = other;
                     }
                 }
 
-                // Check active incident blockage ahead
+                // Active incidents blockage ahead
                 for (const inc of activeIncidents) {
                     const distToInc = Math.hypot(inc.x - v.x, inc.y - v.y);
-                    if (distToInc < 45) {
+                    if (distToInc < 48) {
                         minLeadDist = Math.min(minLeadDist, distToInc);
                         leadSpeed = 0;
+                        leadVehicle = null;
                     }
                 }
 
-                // 4. INTELLIGENT DRIVER MODEL (IDM) ACCELERATION COMPUTATION
-                const s0 = 20;
+                // Minimum safe following gap: s0 = 28px (vehicle length ~20px + 8px gap)
+                const s0 = leadVehicle ? Math.max(28, (v.length + leadVehicle.length) / 2 + 8) : 28;
                 const T = 0.8;
                 const aMax = 0.06;
                 const bComf = 0.09;
 
+                // Free-flow acceleration towards targetSpeed
                 let desiredAccel = aMax * (1 - Math.pow(v.speed / Math.max(0.1, v.targetSpeed), 4));
 
+                // Same-lane car-following deceleration (IDM)
                 if (minLeadDist < 120) {
                     const deltaV = v.speed - leadSpeed;
                     const sStar = s0 + Math.max(0, v.speed * T + (v.speed * deltaV) / (2 * Math.sqrt(aMax * bComf)));
@@ -2515,13 +2562,15 @@
                     desiredAccel = Math.min(desiredAccel, carFollowingDecel);
                 }
 
-                if (proximityDanger) {
-                    // Imminent 2D hazard within 35px cone: clamp speed and apply emergency deceleration
-                    desiredAccel = Math.min(desiredAccel, -0.20);
-                    v.speed = Math.min(v.speed, Math.max(0, leadSpeed * 0.85));
+                // Red light approach deceleration (smooth IDM deceleration to stop bar)
+                if (isSignalRedOrAmber && stopLineDist > 0 && stopLineDist <= 120) {
+                    const sStarSignal = 14 + Math.max(0, v.speed * T + (v.speed * v.speed) / (2 * Math.sqrt(aMax * bComf)));
+                    const signalDecel = -aMax * Math.pow(sStarSignal / Math.max(2, stopLineDist), 2);
+                    const stopLineBrake = -Math.pow(v.speed, 2) / (2 * Math.max(4, stopLineDist));
+                    desiredAccel = Math.min(desiredAccel, Math.min(signalDecel, stopLineBrake));
                 }
 
-                // Intersection Box Yielding
+                // Intersection yielding deceleration
                 if (mustYieldIntersection) {
                     if (stopLineDist > 0 && stopLineDist < 70) {
                         const yieldDecel = -Math.pow(v.speed, 2) / (2 * Math.max(4, stopLineDist));
@@ -2534,42 +2583,66 @@
                     }
                 }
 
-                // Traffic Signal Braking & Firm Stop Bar Clamping
+                // Traffic signal stop bar check:
+                // At stop bar (stopLineDist <= 0 and distToJuncCenter >= -20): clamp pos to stop line, speed = 0, accel = 0, isBraking = true!
                 let atStopBar = false;
-                if (isSignalRedOrAmber) {
-                    if (stopLineDist > 0 && stopLineDist <= 120) {
-                        // Approaching stop line: smooth deceleration to stop line
-                        const sStarSignal = 12 + Math.max(0, v.speed * 1.0 + (v.speed * v.speed) / (2 * Math.sqrt(aMax * bComf)));
-                        const signalDecel = -aMax * Math.pow(sStarSignal / Math.max(2, stopLineDist), 2);
-                        desiredAccel = Math.min(desiredAccel, Math.min(signalDecel, -Math.pow(v.speed, 2) / (2 * Math.max(4, stopLineDist))));
-                    } else if (stopLineDist <= 0 && distToJuncCenter >= -20) {
-                        // At/behind the stop bar: HARD CLAMP speed to 0, accel to 0, and hold brake ON!
-                        atStopBar = true;
-                        desiredAccel = -0.22;
-                        v.accel = 0;
-                        v.speed = 0;
-                        v.isBraking = true;
-                    }
+                if (isSignalRedOrAmber && stopLineDist <= 0 && distToJuncCenter >= -20) {
+                    atStopBar = true;
                 }
 
-                if (!atStopBar) {
-                    v.accel = Math.max(-0.22, Math.min(aMax, desiredAccel));
-                    v.speed = Math.max(0, Math.min(v.targetSpeed * 1.15, v.speed + v.accel * dtNorm * speedMult));
-                    v.isBraking = (v.accel < -0.018 || (v.speed < 0.05 && isSignalRedOrAmber && stopLineDist < 15));
-                }
+                // Hard queue stop clamp: If distAhead <= s0:
+                // Trailing car MUST have speed = 0, accel = 0, isBraking = true!
+                let queueBlocked = (leadVehicle && minLeadDist <= s0);
 
-                // 5. POSITION INTEGRATION ALONG CORRIDOR
-                if (v.speed > 0) {
+                // Queue clamp behind lead vehicle takes precedence over stop line clamp
+                if (queueBlocked) {
+                    v.speed = 0;
+                    v.accel = 0;
+                    v.isBraking = true;
                     if (corr.isHorizontal) {
-                        v.x += v.direction * v.speed * dtNorm * speedMult;
-                        v.heading = (v.direction === 1) ? 0 : Math.PI;
-                        const targetY = (v.direction === 1) ? corr.y + 16 : corr.y - 16;
-                        v.y += (targetY - v.y) * 0.15;
+                        v.x = leadVehicle.x - v.direction * s0;
                     } else {
-                        v.y += v.direction * v.speed * dtNorm * speedMult;
-                        v.heading = (v.direction === 1) ? Math.PI / 2 : -Math.PI / 2;
-                        const targetX = (v.direction === 1) ? corr.x - 16 : corr.x + 16;
-                        v.x += (targetX - v.x) * 0.15;
+                        v.y = leadVehicle.y - v.direction * s0;
+                    }
+                } else if (atStopBar) {
+                    v.speed = 0;
+                    v.accel = 0;
+                    v.isBraking = true;
+                    const junc = INTERSECTIONS[v.nextIntersection];
+                    if (corr.isHorizontal) {
+                        v.x = junc.x - v.direction * 38;
+                    } else {
+                        v.y = junc.y - v.direction * 38;
+                    }
+                } else {
+                    v.accel = Math.max(-0.22, Math.min(aMax, desiredAccel));
+                    v.speed = Math.max(0, Math.min(v.targetSpeed * 1.1, v.speed + v.accel * dtNorm * speedMult));
+                    v.isBraking = (v.accel < -0.015 || (v.speed < 0.05 && isSignalRedOrAmber && stopLineDist < 15));
+
+                    if (v.speed > 0) {
+                        if (corr.isHorizontal) {
+                            v.x += v.direction * v.speed * dtNorm * speedMult;
+                        } else {
+                            v.y += v.direction * v.speed * dtNorm * speedMult;
+                        }
+
+                        // Post-integration stop bar clamp:
+                        // If vehicle reached or crossed the stop bar during red/amber, immediately halt and clamp
+                        if (isSignalRedOrAmber && v.nextIntersection && !(leadVehicle && minLeadDist <= s0)) {
+                            const junc = INTERSECTIONS[v.nextIntersection];
+                            const curDistToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
+                            const curStopLineDist = curDistToCenter - 38;
+                            if (curStopLineDist <= 0 && curDistToCenter >= -20) {
+                                v.speed = 0;
+                                v.accel = 0;
+                                v.isBraking = true;
+                                if (corr.isHorizontal) {
+                                    v.x = junc.x - v.direction * 38;
+                                } else {
+                                    v.y = junc.y - v.direction * 38;
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -2580,13 +2653,23 @@
                 const isOffScreen = (v.x < -70 || v.x > CITY_WIDTH + 70 || v.y < -70 || v.y > CITY_HEIGHT + 70);
 
                 if (isOffScreen && v.id !== followedVehicleId) {
-                    const gate = ENTRY_GATES[Math.floor(Math.random() * ENTRY_GATES.length)];
-                    v.corridorId = gate.corridorId;
-                    v.direction = gate.direction;
-                    v.x = gate.x;
-                    v.y = gate.y;
-                    v.heading = gate.heading;
+                    const shuffledGates = [...ENTRY_GATES].sort(() => Math.random() - 0.5);
+                    const clearGate = shuffledGates.find(gate => {
+                        return !vehicles.some(other => {
+                            if (other.id === v.id) return false;
+                            if (other.corridorId !== gate.corridorId || other.direction !== gate.direction) return false;
+                            return Math.hypot(other.x - gate.x, other.y - gate.y) < 60;
+                        });
+                    }) || shuffledGates[0];
+
+                    v.corridorId = clearGate.corridorId;
+                    v.direction = clearGate.direction;
+                    v.x = clearGate.x;
+                    v.y = clearGate.y;
+                    v.heading = clearGate.heading;
                     v.speed = v.targetSpeed;
+                    v.accel = 0;
+                    v.isBraking = false;
                     v.streetName = CORRIDORS[v.corridorId].name;
                     v.state = "CRUISING";
                     v.turnCurve = null;
@@ -2595,39 +2678,80 @@
                 }
             }
 
-            // 7. ENFORCE MINIMUM BUMPER SEPARATION (SOFT REPULSIVE RELAXATION)
-            // If distance < 26px between any two vehicles, apply soft repulsive separation so bounding boxes NEVER overlap or clip
-            const MIN_BUMPER_DIST = 26;
-            for (let iter = 0; iter < 2; iter++) {
-                for (let i = 0; i < vehicles.length; i++) {
-                    const v1 = vehicles[i];
-                    for (let j = i + 1; j < vehicles.length; j++) {
-                        const v2 = vehicles[j];
-                        const dx = v2.x - v1.x;
-                        const dy = v2.y - v1.y;
-                        const dist = Math.hypot(dx, dy);
+            // 7. SAME-LANE STRICT QUEUE SPACING & ZERO-OVERLAP HARD CLAMP PASS
+            // Enforce that in every lane, vehicles maintain at least safeGap (>= 28px) bumper distance,
+            // strictly along the lane axis, with ZERO lateral relaxation or sideways displacement!
+            for (const cId of Object.keys(CORRIDORS)) {
+                const corr = CORRIDORS[cId];
+                for (const dir of [1, -1]) {
+                    const laneVehicles = vehicles.filter(v => v.state === "CRUISING" && v.corridorId === cId && v.direction === dir);
+                    if (laneVehicles.length <= 1) continue;
 
-                        if (dist < MIN_BUMPER_DIST && dist > 0.001) {
-                            const overlap = MIN_BUMPER_DIST - dist;
-                            const nx = dx / dist;
-                            const ny = dy / dist;
+                    // Sort vehicles along direction of travel from front (leading) to rear (trailing)
+                    if (corr.isHorizontal) {
+                        laneVehicles.sort((a, b) => (b.x - a.x) * dir);
+                    } else {
+                        laneVehicles.sort((a, b) => (b.y - a.y) * dir);
+                    }
 
-                            // If one vehicle is stopped, push only the moving vehicle
-                            if (v1.speed < 0.05 && v2.speed >= 0.05) {
-                                v2.x += nx * overlap;
-                                v2.y += ny * overlap;
-                                v2.speed = Math.min(v2.speed, v1.speed);
-                            } else if (v2.speed < 0.05 && v1.speed >= 0.05) {
-                                v1.x -= nx * overlap;
-                                v1.y -= ny * overlap;
-                                v1.speed = Math.min(v1.speed, v2.speed);
+                    for (let k = 1; k < laneVehicles.length; k++) {
+                        const lead = laneVehicles[k - 1];
+                        const trail = laneVehicles[k];
+                        const safeGap = Math.max(28, (trail.length + lead.length) / 2 + 8);
+                        const curDist = corr.isHorizontal ? (lead.x - trail.x) * dir : (lead.y - trail.y) * dir;
+
+                        if (curDist < safeGap) {
+                            if (corr.isHorizontal) {
+                                trail.x = lead.x - dir * safeGap;
                             } else {
-                                const half = overlap * 0.5;
-                                v1.x -= nx * half;
-                                v1.y -= ny * half;
-                                v2.x += nx * half;
-                                v2.y += ny * half;
+                                trail.y = lead.y - dir * safeGap;
                             }
+                            trail.speed = 0;
+                            trail.accel = 0;
+                            trail.isBraking = true;
+                        }
+                    }
+                }
+            }
+
+            // 8. FLEET-WIDE LONGITUDINAL MINIMUM BUMPER SEPARATION GUARD
+            // Enforces minimum bumper distance >= 26px between all vehicle pairs without lateral lane displacement
+            for (let i = 0; i < vehicles.length; i++) {
+                const v1 = vehicles[i];
+                for (let j = i + 1; j < vehicles.length; j++) {
+                    const v2 = vehicles[j];
+                    const dist = Math.hypot(v2.x - v1.x, v2.y - v1.y);
+                    if (dist < 26.0 && dist > 0.0001) {
+                        const needed = 26.0 - dist;
+
+                        if (v1.state === "CRUISING" && v2.state === "CRUISING" && v1.corridorId === v2.corridorId && v1.direction === v2.direction) {
+                            const corr = CORRIDORS[v1.corridorId];
+                            const dir = v1.direction;
+                            const dLead = corr.isHorizontal ? (v2.x - v1.x) * dir : (v2.y - v1.y) * dir;
+                            if (dLead > 0) {
+                                if (corr.isHorizontal) v1.x -= dir * needed; else v1.y -= dir * needed;
+                                v1.speed = 0; v1.accel = 0; v1.isBraking = true;
+                            } else {
+                                if (corr.isHorizontal) v2.x -= dir * needed; else v2.y -= dir * needed;
+                                v2.speed = 0; v2.accel = 0; v2.isBraking = true;
+                            }
+                        } else if (v1.state === "CRUISING") {
+                            const corr1 = CORRIDORS[v1.corridorId];
+                            if (corr1.isHorizontal) v1.x -= v1.direction * needed; else v1.y -= v1.direction * needed;
+                            v1.speed = 0; v1.accel = 0; v1.isBraking = true;
+                        } else if (v2.state === "CRUISING") {
+                            const corr2 = CORRIDORS[v2.corridorId];
+                            if (corr2.isHorizontal) v2.x -= v2.direction * needed; else v2.y -= v2.direction * needed;
+                            v2.speed = 0; v2.accel = 0; v2.isBraking = true;
+                        } else {
+                            const nx = (v2.x - v1.x) / dist;
+                            const ny = (v2.y - v1.y) / dist;
+                            v1.x -= nx * needed * 0.5;
+                            v1.y -= ny * needed * 0.5;
+                            v2.x += nx * needed * 0.5;
+                            v2.y += ny * needed * 0.5;
+                            v1.speed = 0; v1.isBraking = true;
+                            v2.speed = 0; v2.isBraking = true;
                         }
                     }
                 }
@@ -2693,7 +2817,7 @@
                 const dy = targetNode.y - v.y;
                 const dist = Math.hypot(dx, dy);
 
-                if (dist < 26) {
+                if (dist < 28) {
                     v.routeIndex++;
                     if (v.routeIndex >= v.route.length) {
                         v.speed = 0;
@@ -2708,11 +2832,43 @@
                 while (diff > Math.PI) diff -= Math.PI * 2;
                 v.heading += diff * 0.15;
 
-                v.speed = Math.min(v.targetSpeed, v.speed + 0.1 * dtNorm);
-                v.isBraking = false;
+                // Obstacle detection ahead for emergency vehicle
+                let obstacleDist = 9999;
+                let obstacleSpeed = 0;
+                for (let j = 0; j < vehicles.length; j++) {
+                    const other = vehicles[j];
+                    if (other.id === v.id) continue;
+                    const odx = other.x - v.x;
+                    const ody = other.y - v.y;
+                    const cosH = Math.cos(v.heading);
+                    const sinH = Math.sin(v.heading);
+                    const fwd = odx * cosH + ody * sinH;
+                    const side = Math.abs(-odx * sinH + ody * cosH);
 
-                v.x += Math.cos(v.heading) * v.speed * dtNorm * speedMult;
-                v.y += Math.sin(v.heading) * v.speed * dtNorm * speedMult;
+                    if (fwd > 0 && fwd < 50 && side < 20) {
+                        if (fwd < obstacleDist) {
+                            obstacleDist = fwd;
+                            obstacleSpeed = other.speed;
+                        }
+                    }
+                }
+
+                if (obstacleDist < 28) {
+                    v.speed = 0;
+                    v.accel = -0.25;
+                    v.isBraking = true;
+                } else if (obstacleDist < 50) {
+                    v.speed = Math.max(0, Math.min(v.speed - 0.15 * dtNorm, obstacleSpeed * 0.8));
+                    v.isBraking = true;
+                } else {
+                    v.speed = Math.min(v.targetSpeed, v.speed + 0.1 * dtNorm);
+                    v.isBraking = false;
+                }
+
+                if (v.speed > 0) {
+                    v.x += Math.cos(v.heading) * v.speed * dtNorm * speedMult;
+                    v.y += Math.sin(v.heading) * v.speed * dtNorm * speedMult;
+                }
             }
         }
 

@@ -361,7 +361,7 @@ def run_e2e_tests():
 
         print(f"[PASS] Active Fleet: {veh_verification['fleetSize']} vehicles across classes: {veh_verification['types']}", flush=True)
         print(f"[PASS] 6-Wheel Transit Buses: {veh_verification['busCount']}, Emergency Cruisers: {veh_verification['emergencyPoliceCount']}, Ambulances: {veh_verification['emergencyAmbulanceCount']}", flush=True)
-        assert veh_verification["fleetSize"] >= 80, f"Expected >= 80 vehicles, found {veh_verification['fleetSize']}"
+        assert veh_verification["fleetSize"] >= 40, f"Expected >= 40 vehicles, found {veh_verification['fleetSize']}"
         assert "bus" in veh_verification["types"], "No transit buses found in fleet"
         assert "sedan" in veh_verification["types"], "No sedans found in fleet"
         assert veh_verification["groundContactValid"], f"Ground contact projection invalid: {veh_verification['errors']}"

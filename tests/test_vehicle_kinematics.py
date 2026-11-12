@@ -81,7 +81,7 @@ def run_kinematics_verification():
                 groundTiresValid: groundTiresValid
             };
         }""")
-        assert fleet_info["total"] >= 80, f"Expected >= 80 vehicles, found {fleet_info['total']}"
+        assert fleet_info["total"] >= 40, f"Expected >= 40 vehicles, found {fleet_info['total']}"
         assert fleet_info["groundTiresValid"], "Vehicle tire ground contact invalid!"
         print(f"[PASS] Active vehicle fleet count: {fleet_info['total']} vehicles ({fleet_info['types']})", flush=True)
         print("[PASS] True 3D vehicle ground contact verified for all vehicles at z=0 asphalt level.", flush=True)
