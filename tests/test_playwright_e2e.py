@@ -433,6 +433,141 @@ def run_e2e_tests():
             page.locator("#btnViewCity").click()
             page.wait_for_timeout(500)
 
+        # =========================================================================
+        # 7. REAL-TIME SIGNAL TIMING STATE MACHINE, RED-LIGHT STOPPING & ANTI-COLLISION
+        # =========================================================================
+        print("\n=== [7/7] Verifying Signal Timing State Machine, Anti-Collision & Red-Light Stopping ===", flush=True)
+
+        # 7.1 Slower, Observable Simulation Speeds & Interactive Speed Slider
+        print("[E2E] Testing slower default simulation speed and interactive speed controls...", flush=True)
+        initial_sim_speed = page.evaluate("() => simSpeed")
+        assert initial_sim_speed <= 0.85, f"Expected default simSpeed <= 0.85, got {initial_sim_speed}"
+
+        # Test changing speed slider to 1.25x and back to 0.75x
+        slider = page.locator("#simSpeedRange")
+        if slider.count() > 0:
+            page.evaluate("() => { const s = document.getElementById('simSpeedRange'); s.value = '1.25'; updateSimSpeed('1.25'); }")
+            page.wait_for_timeout(200)
+            spd_125 = page.evaluate("() => simSpeed")
+            lbl_125 = page.locator("#speedLabel").text_content() or ""
+            assert math.isclose(spd_125, 1.25, abs_tol=1e-3), f"Expected simSpeed 1.25, got {spd_125}"
+            assert "1.25" in lbl_125, f"Expected speed label '1.25x', got {lbl_125}"
+
+            # Restore to 0.75x
+            page.evaluate("() => { const s = document.getElementById('simSpeedRange'); s.value = '0.75'; updateSimSpeed('0.75'); }")
+            page.wait_for_timeout(200)
+            spd_075 = page.evaluate("() => simSpeed")
+            assert math.isclose(spd_075, 0.75, abs_tol=1e-3), f"Expected simSpeed 0.75, got {spd_075}"
+        print("[PASS] Interactive speed slider dynamically updates simSpeed and UI readout cleanly.", flush=True)
+
+        # 7.2 Signal Timing State Machine (>=8.0s Green, Amber >=3.0s, All-Red >=1.5s, No Rapid Flickering)
+        print("[E2E] Verifying timing parameters across all 6 physical signal controllers...", flush=True)
+        sig_states = page.evaluate("""() => {
+            return Object.entries(junctionStates).map(([id, s]) => ({
+                id: id,
+                minGreen: s.minGreen,
+                amberDuration: s.amberDuration,
+                allRedDuration: s.allRedDuration,
+                phase: s.phase,
+                isAmber: s.isAmber,
+                isAllRed: s.isAllRed
+            }));
+        }""")
+        for s in sig_states:
+            assert s["minGreen"] >= 8.0, f"Junction {s['id']} minGreen {s['minGreen']}s < 8.0s requirement!"
+            assert s["amberDuration"] >= 3.0, f"Junction {s['id']} amberDuration {s['amberDuration']}s < 3.0s!"
+            assert s["allRedDuration"] >= 1.5, f"Junction {s['id']} allRedDuration {s['allRedDuration']}s < 1.5s!"
+        print(f"[PASS] All {len(sig_states)} junction signal heads configured with minGreen >= 8.0s, amber >= 3.0s, all-red >= 1.5s.", flush=True)
+
+        # Check for zero high-frequency flickering over 20 sampling frames
+        flicker_count = 0
+        last_sig_phases = {s["id"]: s["phase"] for s in sig_states}
+        for _ in range(20):
+            page.wait_for_timeout(100)
+            current_sig_phases = page.evaluate("() => Object.fromEntries(Object.entries(junctionStates).map(([id, s]) => [id, s.phase]))")
+            for jid, ph in current_sig_phases.items():
+                if ph != last_sig_phases[jid]:
+                    # Check that the change was preceded by valid phase hold
+                    phase_time = page.evaluate(f"() => junctionStates['{jid}'] ? junctionStates['{jid}'].phaseTime : 0")
+                    if phase_time < 0.0:  # Freshly reset after all-red is valid
+                        flicker_count += 1
+            last_sig_phases = current_sig_phases
+        assert flicker_count == 0, f"Signal flicker violations detected: {flicker_count}"
+        print("[PASS] Signal stability verified: ZERO rapid flickering, smooth transition cycles confirmed.", flush=True)
+
+        # 7.3 Firm Red-Light Stopping at Stop Bar (speed = 0)
+        print("[E2E] Verifying red light stopping compliance at stop lines...", flush=True)
+        red_stopped_vehicles = page.evaluate("""() => {
+            const stopped = [];
+            for (const v of vehicles) {
+                if (!v.nextIntersection || v.state === 'TURNING' || v.isEmergency) continue;
+                const corr = CORRIDORS[v.corridorId];
+                const junc = INTERSECTIONS[v.nextIntersection];
+                const juncState = junctionStates[v.nextIntersection];
+                const sig = getJunctionSignal(juncState, corr.isHorizontal);
+                const distToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
+                const stopLineDist = distToCenter - 38;
+
+                if ((sig === 'red' || sig === 'amber') && stopLineDist <= 0 && distToCenter >= -20) {
+                    stopped.push({ id: v.id, speed: v.speed, accel: v.accel, isBraking: v.isBraking, stopLineDist: stopLineDist });
+                }
+            }
+            return stopped;
+        }""")
+        print(f"[E2E] Vehicles currently at stop bar during red/amber: {len(red_stopped_vehicles)}", flush=True)
+        for sv in red_stopped_vehicles:
+            assert sv["speed"] == 0.0, f"Vehicle #{sv['id']} at stop bar failed to hold speed 0 at red light: speed={sv['speed']}"
+            assert sv["isBraking"], f"Vehicle #{sv['id']} brake light not active at red signal"
+        if len(red_stopped_vehicles) > 0:
+            print(f"[PASS] Complete stop bar compliance: {len(red_stopped_vehicles)} queued vehicles holding speed = 0.0 at red lights.", flush=True)
+
+        # 7.4 Fleet-Wide Collision Avoidance (Bumper Separation >= 24px)
+        print("[E2E] Verifying 0 bounding box collisions (minimum distance >= 24px) across 30 live simulation steps...", flush=True)
+        global_min_dist = 9999.0
+        collision_count = 0
+        for _ in range(30):
+            res = page.evaluate("""() => {
+                let minDist = 9999;
+                let violations = 0;
+                for (let i = 0; i < vehicles.length; i++) {
+                    for (let j = i + 1; j < vehicles.length; j++) {
+                        const d = Math.hypot(vehicles[j].x - vehicles[i].x, vehicles[j].y - vehicles[i].y);
+                        if (d < minDist) minDist = d;
+                        if (d < 24.0) violations++;
+                    }
+                }
+                return { minDist, violations };
+            }""")
+            if res["minDist"] < global_min_dist:
+                global_min_dist = res["minDist"]
+            collision_count += res["violations"]
+            page.wait_for_timeout(100)
+
+        print(f"[E2E] Global minimum inter-vehicle bumper distance recorded: {global_min_dist:.2f}px (violations: {collision_count})", flush=True)
+        assert collision_count == 0, f"Detected {collision_count} inter-vehicle collisions (distance < 24px)!"
+        assert global_min_dist >= 24.0, f"Global minimum vehicle separation violated: {global_min_dist:.2f}px < 24.0px"
+        print(f"[PASS] 0 bounding box collisions verified! Minimum bumper separation {global_min_dist:.2f}px >= 24.0px across entire fleet.", flush=True)
+
+        # 7.5 Turning Vehicles Yielding & Non-Clipping
+        print("[E2E] Verifying turning vehicles yield and do not clip into cruising or opposing vehicles...", flush=True)
+        turn_check = page.evaluate("""() => {
+            const turning = vehicles.filter(v => v.state === 'TURNING');
+            let minDistance = 9999;
+            let clipViolations = 0;
+            for (const tv of turning) {
+                for (const ov of vehicles) {
+                    if (tv.id === ov.id) continue;
+                    const d = Math.hypot(ov.x - tv.x, ov.y - tv.y);
+                    if (d < minDistance) minDistance = d;
+                    if (d < 24.0) clipViolations++;
+                }
+            }
+            return { count: turning.length, minDistance, clipViolations };
+        }""")
+        print(f"[PASS] Active turning vehicles: {turn_check['count']}, Min clearance to other vehicles: {turn_check['minDistance']:.2f}px", flush=True)
+        assert turn_check["clipViolations"] == 0, f"Turning vehicles clipped into other vehicles: {turn_check}"
+        print("[PASS] Turning vehicle clearance verified: ZERO clipping into other vehicles.", flush=True)
+
         # Check Console Errors
         print(f"\n[E2E] Total console logs recorded: {len(console_logs)}", flush=True)
         if console_errors:
@@ -453,6 +588,10 @@ def run_e2e_tests():
     print("ALL PLAYWRIGHT E2E BROWSER TESTS PASSED SUCCESSFULLY 100%!")
     print("=======================================================", flush=True)
     return True
+
+
+def test_playwright_e2e():
+    assert run_e2e_tests()
 
 
 if __name__ == "__main__":

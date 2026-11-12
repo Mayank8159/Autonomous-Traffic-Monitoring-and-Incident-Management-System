@@ -974,8 +974,8 @@
 
         <div class="speed-slider">
             <span>Speed:</span>
-            <input type="range" id="simSpeedRange" min="1" max="4" value="2" onchange="updateSimSpeed(this.value)">
-            <span id="speedLabel">1.0x</span>
+            <input type="range" id="simSpeedRange" min="0.25" max="2.5" step="0.25" value="0.75" oninput="updateSimSpeed(this.value)" onchange="updateSimSpeed(this.value)">
+            <span id="speedLabel">0.75x</span>
         </div>
 
         <div style="height:18px; width:1px; background:var(--border-dim); margin:0 4px;"></div>
@@ -1421,7 +1421,7 @@
 
         // Global Simulation State
         let isSimRunning = true;
-        let simSpeed = 1.0;
+        let simSpeed = 0.75;
         let activeIncidentPlacement = false;
         let isNightMode = true;
         let soundEnabled = true;
@@ -1455,19 +1455,46 @@
         // (4 approaches per intersection: North, South, East, West)
         let junctionStates = {};
         for (const [id, data] of Object.entries(INTERSECTIONS)) {
+            const jNum = parseInt(id.replace("INT_", "")) || 0;
+            const initPhase = (jNum % 2 === 0) ? 0 : 1;
             junctionStates[id] = {
                 id: id,
                 queues: [3.5 + Math.random() * 2, 3.8 + Math.random() * 2, 2.5 + Math.random() * 2, 2.8 + Math.random() * 2], // N, S, E, W
-                phase: 0, // 0 = NS Green (EW Red), 1 = EW Green (NS Red)
-                phaseCounter: 1,
-                minGreen: 4,
+                phase: initPhase, // 0 = NS Green (EW Red), 1 = EW Green (NS Red)
+                targetPhase: initPhase,
+                phaseTime: 2.0 + (jNum % 5) * 1.5, // elapsed seconds in current phase
+                minGreen: 9.0 + (jNum % 4) * 1.0, // 9.0 to 12.0 seconds minimum green holding time
+                amberDuration: 3.2, // 3.0 to 3.5s yellow transition
+                allRedDuration: 1.8, // 1.5 to 2.0s all-red clearance interval
                 isAmber: false,
                 amberTimer: 0,
+                isAllRed: false,
+                allRedTimer: 0,
+                nextInferenceTimer: 0.2 + (jNum % 5) * 0.2, // periodic RL evaluation (every 1.0s)
                 manualOverride: null, // null | 0 | 1
-                lastModelAction: 0,
+                lastModelAction: initPhase,
                 lastModelProbs: [0.5, 0.5],
                 lastInferenceTime: 0.02
             };
+        }
+
+        // Authoritative signal color resolver: handles Green, Amber, All-Red Clearance
+        function getJunctionSignal(state, isHorizontal) {
+            if (!state) return "red";
+            if (state.isAllRed) return "red";
+            if (isHorizontal) {
+                // East-West corridor
+                if (state.phase === 1) {
+                    return state.isAmber ? "amber" : "green";
+                }
+                return "red";
+            } else {
+                // North-South corridor
+                if (state.phase === 0) {
+                    return state.isAmber ? "amber" : "green";
+                }
+                return "red";
+            }
         }
 
         /* =========================================================================
@@ -1894,13 +1921,28 @@
         function initVehicles() {
             vehicles = [];
             const corridorIds = Object.keys(CORRIDORS);
-            const numVehicles = 95;
+            const numVehicles = 88;
 
             for (let i = 0; i < numVehicles; i++) {
                 const cId = corridorIds[i % corridorIds.length];
                 const dir = (Math.random() > 0.5) ? 1 : -1;
-                const pos = Math.random() * (CORRIDORS[cId].isHorizontal ? CITY_WIDTH : CITY_HEIGHT);
-                vehicles.push(createCorridorVehicle(cId, dir, pos));
+                const isH = CORRIDORS[cId].isHorizontal;
+                const maxCoord = isH ? CITY_WIDTH : CITY_HEIGHT;
+
+                let bestPos = Math.random() * maxCoord;
+                for (let attempt = 0; attempt < 30; attempt++) {
+                    const cand = 40 + Math.random() * (maxCoord - 80);
+                    const collision = vehicles.some(v => {
+                        if (v.corridorId !== cId || v.direction !== dir) return false;
+                        const existingPos = isH ? v.x : v.y;
+                        return Math.abs(existingPos - cand) < 36;
+                    });
+                    if (!collision) {
+                        bestPos = cand;
+                        break;
+                    }
+                }
+                vehicles.push(createCorridorVehicle(cId, dir, bestPos));
             }
         }
 
@@ -1931,7 +1973,8 @@
             const length = isBus ? 30 : (isVan ? 22 : (isSuv ? 18 : 15.5));
             const width = isBus ? 10 : (isVan ? 9.5 : (isSuv ? 9 : 8));
             const height = isBus ? 8.5 : (isVan ? 7.5 : (isSuv ? 6.5 : 5.5));
-            const targetSpeed = 1.6 + Math.random() * 0.9;
+            // Default vehicle speeds scaled down ~40% for realistic, observable traffic kinematics
+            const targetSpeed = 0.85 + Math.random() * 0.45;
 
             const v = {
                 id: Math.floor(Math.random() * 90000) + 10000,
@@ -2145,6 +2188,23 @@
             };
         }
 
+        function evalCurvePoint(tc, t) {
+            const invT = 1.0 - t;
+            if (tc.isCubic) {
+                const p0 = tc.p0, p1 = tc.p1, p2 = tc.p2, p3 = tc.p3;
+                return {
+                    x: invT * invT * invT * p0.x + 3 * invT * invT * t * p1.x + 3 * invT * t * t * p2.x + t * t * t * p3.x,
+                    y: invT * invT * invT * p0.y + 3 * invT * invT * t * p1.y + 3 * invT * t * t * p2.y + t * t * t * p3.y
+                };
+            } else {
+                const p0 = tc.p0, p1 = tc.p1, p2 = tc.p2;
+                return {
+                    x: invT * invT * p0.x + 2 * invT * t * p1.x + t * t * p2.x,
+                    y: invT * invT * p0.y + 2 * invT * t * p1.y + t * t * p2.y
+                };
+            }
+        }
+
         function updateVehicles(dt) {
             const speedMult = simSpeed;
             const dtNorm = (dt || (1 / 60)) * 60;
@@ -2160,16 +2220,46 @@
 
                 // 2. TURNING MANEUVER STATE EXECUTION (SMOOTH QUADRATIC & CUBIC BEZIER ARCS)
                 if (v.state === "TURNING" && v.turnCurve) {
-                    const stepProgress = (v.speed / v.turnCurve.length) * dtNorm * speedMult * 0.9;
-                    v.turnProgress += stepProgress;
+                    const tc = v.turnCurve;
+
+                    // Turning vehicles check ahead along their Bezier path and yield if blocked
+                    const tLook = Math.min(1.0, v.turnProgress + 0.18);
+                    const lookPt = evalCurvePoint(tc, tLook);
+
+                    let turnBlocked = false;
+                    let leadTurnSpeed = v.targetSpeed;
+                    for (let j = 0; j < vehicles.length; j++) {
+                        if (i === j) continue;
+                        const other = vehicles[j];
+                        const dToLook = Math.hypot(other.x - lookPt.x, other.y - lookPt.y);
+                        const dToSelf = Math.hypot(other.x - v.x, other.y - v.y);
+                        if (dToLook < 24 || (dToSelf < 28 && other.turnProgress !== undefined && other.turnProgress > v.turnProgress)) {
+                            turnBlocked = true;
+                            leadTurnSpeed = Math.min(leadTurnSpeed, other.speed);
+                            break;
+                        }
+                    }
+
+                    if (turnBlocked) {
+                        v.speed = Math.max(0, Math.min(v.speed - 0.08 * dtNorm, leadTurnSpeed * 0.8));
+                        v.isBraking = true;
+                    } else {
+                        v.speed = Math.min(v.targetSpeed * 0.85, v.speed + 0.04 * dtNorm);
+                        v.isBraking = false;
+                    }
+
+                    if (v.speed > 0.005) {
+                        const stepProgress = (v.speed / tc.length) * dtNorm * speedMult * 0.9;
+                        v.turnProgress += stepProgress;
+                    }
 
                     if (v.turnProgress >= 1.0) {
                         v.turnProgress = 1.0;
-                        v.x = v.turnCurve.pEnd.x;
-                        v.y = v.turnCurve.pEnd.y;
-                        v.corridorId = v.turnCurve.nextCorridorId;
-                        v.direction = v.turnCurve.nextDirection;
-                        v.heading = v.turnCurve.nextHeading;
+                        v.x = tc.pEnd.x;
+                        v.y = tc.pEnd.y;
+                        v.corridorId = tc.nextCorridorId;
+                        v.direction = tc.nextDirection;
+                        v.heading = tc.nextHeading;
                         v.streetName = CORRIDORS[v.corridorId]?.name || "Arterial";
                         v.state = "CRUISING";
                         v.turnCurve = null;
@@ -2178,7 +2268,6 @@
                     } else {
                         const t = v.turnProgress;
                         const invT = 1.0 - t;
-                        const tc = v.turnCurve;
 
                         if (tc.isCubic) {
                             // 180° Perimeter Turnaround Loop
@@ -2230,11 +2319,9 @@
 
                     stopLineDist = distToJuncCenter - 38;
 
-                    if (corr.isHorizontal) {
-                        isSignalRedOrAmber = (juncState.phase === 0 || juncState.isAmber);
-                    } else {
-                        isSignalRedOrAmber = (juncState.phase === 1 || juncState.isAmber);
-                    }
+                    // Real-time authoritative signal state: Green, Amber, or All-Red
+                    const sig = getJunctionSignal(juncState, corr.isHorizontal);
+                    isSignalRedOrAmber = (sig !== "green");
 
                     if (emergencyPreemptionCorridor.includes(v.nextIntersection)) {
                         isSignalRedOrAmber = false;
@@ -2333,26 +2420,74 @@
                     }
                 }
 
-                // Check distance to lead vehicle in the same corridor & direction
+                // Intersection entry yielding: vehicles approaching an intersection must yield if another conflicting vehicle is inside the inner box
+                let mustYieldIntersection = false;
+                if (v.nextIntersection && distToJuncCenter > 0 && distToJuncCenter < 65) {
+                    const junc = INTERSECTIONS[v.nextIntersection];
+                    for (let j = 0; j < vehicles.length; j++) {
+                        if (i === j) continue;
+                        const other = vehicles[j];
+                        // Inner intersection conflict zone (< 24px from center, well clear of cross-street stop bars at 38px)
+                        if (Math.abs(other.x - junc.x) < 24 && Math.abs(other.y - junc.y) < 24) {
+                            // Only yield to vehicles actively turning or moving through the box, NOT stationary cars queued at red lights
+                            if (other.state === "TURNING" || (other.corridorId !== v.corridorId && other.speed > 0.05)) {
+                                mustYieldIntersection = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Lead vehicle tracking & 2D Collision Avoidance
+                // Check distance to lead vehicle in the same corridor & 2D travel cone
                 let minLeadDist = 9999;
                 let leadSpeed = v.targetSpeed;
+                let proximityDanger = false;
+
+                const cosH = Math.cos(v.heading);
+                const sinH = Math.sin(v.heading);
 
                 for (let j = 0; j < vehicles.length; j++) {
                     if (i === j) continue;
                     const other = vehicles[j];
-                    if (other.corridorId !== v.corridorId || other.direction !== v.direction) continue;
-                    if (other.state === "TURNING") continue;
 
-                    let distAhead;
-                    if (corr.isHorizontal) {
-                        distAhead = (other.x - v.x) * v.direction;
-                    } else {
-                        distAhead = (other.y - v.y) * v.direction;
+                    const dx = other.x - v.x;
+                    const dy = other.y - v.y;
+                    const dist = Math.hypot(dx, dy);
+
+                    // Longitudinal (forward) and lateral (sideways) displacement in vehicle local frame
+                    const fwdDist = dx * cosH + dy * sinH;
+                    const sideDist = Math.abs(-dx * sinH + dy * cosH);
+
+                    // 1. Same-corridor car following
+                    if (other.corridorId === v.corridorId && other.direction === v.direction) {
+                        let distAhead;
+                        if (corr.isHorizontal) {
+                            distAhead = (other.x - v.x) * v.direction;
+                        } else {
+                            distAhead = (other.y - v.y) * v.direction;
+                        }
+
+                        if (distAhead > 0 && distAhead < minLeadDist) {
+                            minLeadDist = distAhead;
+                            leadSpeed = other.speed;
+                        }
                     }
 
-                    if (distAhead > 0 && distAhead < minLeadDist) {
-                        minLeadDist = distAhead;
-                        leadSpeed = other.speed;
+                    // 2. 2D Collision Avoidance & Travel Cone (turning vehicles, merging vehicles, crossing vehicles)
+                    // (NOTE: Removed old `if (other.state === "TURNING") continue;` so cruising cars never drive through turning cars!)
+                    if (fwdDist > 0 && fwdDist < 120 && sideDist < 20) {
+                        const effectiveDist = Math.max(1, fwdDist - 12);
+                        if (effectiveDist < minLeadDist) {
+                            minLeadDist = effectiveDist;
+                            leadSpeed = Math.min(leadSpeed, other.speed);
+                        }
+                    }
+
+                    // 3. Proximity Danger Check (radial distance r < 35px ahead)
+                    if (dist < 35 && fwdDist > 0 && sideDist < 22) {
+                        proximityDanger = true;
+                        leadSpeed = Math.min(leadSpeed, other.speed);
                     }
                 }
 
@@ -2380,26 +2515,62 @@
                     desiredAccel = Math.min(desiredAccel, carFollowingDecel);
                 }
 
-                if (isSignalRedOrAmber && stopLineDist > 0 && stopLineDist < 100) {
-                    const signalDecel = -Math.pow(v.speed, 2) / (2 * Math.max(6, stopLineDist));
-                    desiredAccel = Math.min(desiredAccel, signalDecel);
+                if (proximityDanger) {
+                    // Imminent 2D hazard within 35px cone: clamp speed and apply emergency deceleration
+                    desiredAccel = Math.min(desiredAccel, -0.20);
+                    v.speed = Math.min(v.speed, Math.max(0, leadSpeed * 0.85));
                 }
 
-                v.accel = Math.max(-0.22, Math.min(aMax, desiredAccel));
-                v.speed = Math.max(0, Math.min(v.targetSpeed * 1.15, v.speed + v.accel * dtNorm * speedMult));
-                v.isBraking = (v.accel < -0.018 || (v.speed < 0.05 && isSignalRedOrAmber && stopLineDist < 15));
+                // Intersection Box Yielding
+                if (mustYieldIntersection) {
+                    if (stopLineDist > 0 && stopLineDist < 70) {
+                        const yieldDecel = -Math.pow(v.speed, 2) / (2 * Math.max(4, stopLineDist));
+                        desiredAccel = Math.min(desiredAccel, yieldDecel);
+                    } else if (stopLineDist <= 0 && distToJuncCenter >= 10) {
+                        desiredAccel = -0.22;
+                        v.speed = 0;
+                        v.accel = 0;
+                        v.isBraking = true;
+                    }
+                }
+
+                // Traffic Signal Braking & Firm Stop Bar Clamping
+                let atStopBar = false;
+                if (isSignalRedOrAmber) {
+                    if (stopLineDist > 0 && stopLineDist <= 120) {
+                        // Approaching stop line: smooth deceleration to stop line
+                        const sStarSignal = 12 + Math.max(0, v.speed * 1.0 + (v.speed * v.speed) / (2 * Math.sqrt(aMax * bComf)));
+                        const signalDecel = -aMax * Math.pow(sStarSignal / Math.max(2, stopLineDist), 2);
+                        desiredAccel = Math.min(desiredAccel, Math.min(signalDecel, -Math.pow(v.speed, 2) / (2 * Math.max(4, stopLineDist))));
+                    } else if (stopLineDist <= 0 && distToJuncCenter >= -20) {
+                        // At/behind the stop bar: HARD CLAMP speed to 0, accel to 0, and hold brake ON!
+                        atStopBar = true;
+                        desiredAccel = -0.22;
+                        v.accel = 0;
+                        v.speed = 0;
+                        v.isBraking = true;
+                    }
+                }
+
+                if (!atStopBar) {
+                    v.accel = Math.max(-0.22, Math.min(aMax, desiredAccel));
+                    v.speed = Math.max(0, Math.min(v.targetSpeed * 1.15, v.speed + v.accel * dtNorm * speedMult));
+                    v.isBraking = (v.accel < -0.018 || (v.speed < 0.05 && isSignalRedOrAmber && stopLineDist < 15));
+                }
 
                 // 5. POSITION INTEGRATION ALONG CORRIDOR
-                if (corr.isHorizontal) {
-                    v.x += v.direction * v.speed * dtNorm * speedMult;
-                    v.heading = (v.direction === 1) ? 0 : Math.PI;
-                    const targetY = (v.direction === 1) ? corr.y + 16 : corr.y - 16;
-                    v.y += (targetY - v.y) * 0.15;
-                } else {
-                    v.y += v.direction * v.speed * dtNorm * speedMult;
-                    v.heading = (v.direction === 1) ? Math.PI / 2 : -Math.PI / 2;
-                    const targetX = (v.direction === 1) ? corr.x - 16 : corr.x + 16;
-                    v.x += (targetX - v.x) * 0.15;
+                if (v.speed > 0) {
+                    if (corr.isHorizontal) {
+                        v.x += v.direction * v.speed * dtNorm * speedMult;
+                        v.heading = (v.direction === 1) ? 0 : Math.PI;
+                        const targetY = (v.direction === 1) ? corr.y + 16 : corr.y - 16;
+                        v.y += (targetY - v.y) * 0.15;
+                    } else {
+                        v.y += v.direction * v.speed * dtNorm * speedMult;
+                        v.heading = (v.direction === 1) ? Math.PI / 2 : -Math.PI / 2;
+                        const targetX = (v.direction === 1) ? corr.x - 16 : corr.x + 16;
+                        v.x += (targetX - v.x) * 0.15;
+                    }
                 }
 
                 v.tripDistance += v.speed * dtNorm * speedMult;
@@ -2421,6 +2592,44 @@
                     v.turnCurve = null;
                     v.turnPlanned = false;
                     findNextIntersection(v);
+                }
+            }
+
+            // 7. ENFORCE MINIMUM BUMPER SEPARATION (SOFT REPULSIVE RELAXATION)
+            // If distance < 26px between any two vehicles, apply soft repulsive separation so bounding boxes NEVER overlap or clip
+            const MIN_BUMPER_DIST = 26;
+            for (let iter = 0; iter < 2; iter++) {
+                for (let i = 0; i < vehicles.length; i++) {
+                    const v1 = vehicles[i];
+                    for (let j = i + 1; j < vehicles.length; j++) {
+                        const v2 = vehicles[j];
+                        const dx = v2.x - v1.x;
+                        const dy = v2.y - v1.y;
+                        const dist = Math.hypot(dx, dy);
+
+                        if (dist < MIN_BUMPER_DIST && dist > 0.001) {
+                            const overlap = MIN_BUMPER_DIST - dist;
+                            const nx = dx / dist;
+                            const ny = dy / dist;
+
+                            // If one vehicle is stopped, push only the moving vehicle
+                            if (v1.speed < 0.05 && v2.speed >= 0.05) {
+                                v2.x += nx * overlap;
+                                v2.y += ny * overlap;
+                                v2.speed = Math.min(v2.speed, v1.speed);
+                            } else if (v2.speed < 0.05 && v1.speed >= 0.05) {
+                                v1.x -= nx * overlap;
+                                v1.y -= ny * overlap;
+                                v1.speed = Math.min(v1.speed, v2.speed);
+                            } else {
+                                const half = overlap * 0.5;
+                                v1.x -= nx * half;
+                                v1.y -= ny * half;
+                                v2.x += nx * half;
+                                v2.y += ny * half;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2578,70 +2787,97 @@
         }
 
         /* =========================================================================
-           24 TRAFFIC SIGNALS & NEURAL NETWORK POLICY ACTUATION
+           24 TRAFFIC SIGNALS & REAL-TIME NEURAL NETWORK POLICY ACTUATION
+           Elapsed-time state machine: minGreen (8-12s), amber (3-3.5s), all-red (1.5-2.0s)
            ========================================================================= */
 
-        function updateTrafficSignals() {
+        function updateTrafficSignals(dt) {
+            const elapsed = (dt || (1 / 60));
+
             for (const [id, state] of Object.entries(junctionStates)) {
                 // 1. Dynamic Green-Wave Preemption Override
                 if (emergencyPreemptionCorridor.includes(id)) {
                     // Preemption corridor active: set green in direction of travel
                     state.phase = (id === "INT_1" || id === "INT_2" || id === "INT_3") ? 1 : 0;
+                    state.targetPhase = state.phase;
                     state.isAmber = false;
+                    state.isAllRed = false;
+                    state.phaseTime = 0;
                     continue;
                 }
 
                 // 2. Manual User Override
                 if (state.manualOverride !== null) {
                     state.phase = state.manualOverride;
+                    state.targetPhase = state.manualOverride;
                     state.isAmber = false;
+                    state.isAllRed = false;
+                    state.phaseTime = 0;
                     continue;
                 }
 
-                // 3. Smooth Amber Caution Transition (3 seconds)
-                if (state.isAmber) {
-                    state.amberTimer -= 1;
-                    if (state.amberTimer <= 0) {
-                        state.isAmber = false;
-                        state.phase = (state.phase === 0) ? 1 : 0;
-                        state.phaseCounter = 1;
+                // 3. All-Red Clearance Interval (both NS & EW red to prevent broadside intersection collisions)
+                if (state.isAllRed) {
+                    state.allRedTimer -= elapsed;
+                    if (state.allRedTimer <= 0) {
+                        state.isAllRed = false;
+                        state.phase = state.targetPhase;
+                        state.phaseTime = 0.0;
+                        state.nextInferenceTimer = 1.0;
                     }
                     continue;
                 }
 
-                state.phaseCounter += 1;
+                // 4. Smooth Amber Caution Transition (3.0 to 3.5 seconds)
+                if (state.isAmber) {
+                    state.amberTimer -= elapsed;
+                    if (state.amberTimer <= 0) {
+                        state.isAmber = false;
+                        state.isAllRed = true;
+                        state.allRedTimer = state.allRedDuration;
+                    }
+                    continue;
+                }
 
-                // 4. Client-side Neural Network Policy Forward Pass
-                const qs = state.queues;
-                const totalQ = qs[0] + qs[1] + qs[2] + qs[3];
-                const state7d = [
-                    qs[0], qs[1], qs[2], qs[3],
-                    totalQ,
-                    state.phase === 0 ? 1.0 : 0.0,
-                    state.phase === 1 ? 1.0 : 0.0
-                ];
+                // 5. Active Green Phase Timing
+                state.phaseTime += elapsed;
+                state.nextInferenceTimer -= elapsed;
 
-                const t0 = performance.now();
-                const policyOut = evaluateRLPolicy(state7d);
-                const t1 = performance.now();
+                // 6. Periodic Deep Learning RL Policy Forward Pass (evaluated periodically every 1.0s)
+                if (state.nextInferenceTimer <= 0) {
+                    state.nextInferenceTimer = 1.0;
 
-                state.lastModelAction = policyOut.action;
-                state.lastModelProbs = policyOut.probs;
-                state.lastInferenceTime = (t1 - t0);
+                    const qs = state.queues;
+                    const totalQ = qs[0] + qs[1] + qs[2] + qs[3];
+                    const state7d = [
+                        qs[0], qs[1], qs[2], qs[3],
+                        totalQ,
+                        state.phase === 0 ? 1.0 : 0.0,
+                        state.phase === 1 ? 1.0 : 0.0
+                    ];
 
-                // Actuate phase based on genuine model inference!
-                if (policyOut.action !== state.phase && state.phaseCounter >= state.minGreen) {
-                    // Trigger physical Amber transition
-                    state.isAmber = true;
-                    state.amberTimer = 3;
+                    const t0 = performance.now();
+                    const policyOut = evaluateRLPolicy(state7d);
+                    const t1 = performance.now();
+
+                    state.lastModelAction = policyOut.action;
+                    state.lastModelProbs = policyOut.probs;
+                    state.lastInferenceTime = (t1 - t0);
+
+                    // Actuate phase transition ONLY when minimum green holding time (8-12s) has elapsed
+                    if (policyOut.action !== state.phase && state.phaseTime >= state.minGreen) {
+                        state.isAmber = true;
+                        state.amberTimer = state.amberDuration;
+                        state.targetPhase = policyOut.action;
+                    }
                 }
 
                 // Physical queue inflow / outflow dynamics
                 for (let q = 0; q < 4; q++) {
                     const isGreenApproach = (state.phase === 0 && (q === 0 || q === 1)) ||
                                             (state.phase === 1 && (q === 2 || q === 3));
-                    const discharge = (isGreenApproach && !state.isAmber) ? 0.35 : 0.0;
-                    const arrival = 0.28 + (Math.sin(Date.now() * 0.001 + q) * 0.08);
+                    const discharge = (isGreenApproach && !state.isAmber && !state.isAllRed) ? 0.35 * (elapsed * 60) : 0.0;
+                    const arrival = (0.28 + (Math.sin(Date.now() * 0.001 + q) * 0.08)) * (elapsed * 60);
                     state.queues[q] = Math.max(0.5, Math.min(24.5, state.queues[q] + arrival - discharge));
                 }
             }
@@ -3033,15 +3269,8 @@
             // E. 24 Working Traffic Signal Heads with Depth Sorting
             for (const [id, junc] of Object.entries(INTERSECTIONS)) {
                 const state = junctionStates[id];
-                let colNS = "red", colEW = "red";
-                if (state.isAmber) {
-                    if (state.phase === 0) colNS = "amber";
-                    else colEW = "amber";
-                } else if (state.phase === 0) {
-                    colNS = "green";
-                } else {
-                    colEW = "green";
-                }
+                const colNS = getJunctionSignal(state, false);
+                const colEW = getJunctionSignal(state, true);
 
                 const heads = [
                     { x: junc.x - 42, y: junc.y - 50, col: colNS, dir: "N" },
@@ -3169,15 +3398,8 @@
             // 6. Illuminated Dynamic Approach Stop-Bars (24 Stop-Bars with Real-Time Signal Glow)
             for (const [id, junc] of Object.entries(INTERSECTIONS)) {
                 const state = junctionStates[id];
-                let colNS = "red", colEW = "red";
-                if (state.isAmber) {
-                    if (state.phase === 0) colNS = "amber";
-                    else colEW = "amber";
-                } else if (state.phase === 0) {
-                    colNS = "green";
-                } else {
-                    colEW = "green";
-                }
+                const colNS = getJunctionSignal(state, false);
+                const colEW = getJunctionSignal(state, true);
 
                 drawIlluminatedStopBar(junc.x - 36, junc.y - 36, junc.x - 2, junc.y - 36, colNS); // North
                 drawIlluminatedStopBar(junc.x + 2, junc.y + 36, junc.x + 36, junc.y + 36, colNS);  // South
@@ -4336,11 +4558,8 @@
             document.getElementById("barQWest").style.width = Math.min(100, (qs[3] / 24) * 100) + "%";
 
             // Signal lights status in inspector
-            const isAmber = state.isAmber;
-            const isPhase0 = (state.phase === 0);
-
-            const colNS = isAmber ? (isPhase0 ? "amber" : "red") : (isPhase0 ? "green" : "red");
-            const colEW = isAmber ? (!isPhase0 ? "amber" : "red") : (!isPhase0 ? "green" : "red");
+            const colNS = getJunctionSignal(state, false);
+            const colEW = getJunctionSignal(state, true);
 
             setInspectorLight("N", colNS);
             setInspectorLight("S", colNS);
@@ -4399,7 +4618,10 @@
             if (junctionStates[juncId]) {
                 junctionStates[juncId].manualOverride = phase;
                 junctionStates[juncId].phase = phase;
+                junctionStates[juncId].targetPhase = phase;
+                junctionStates[juncId].phaseTime = 0;
                 junctionStates[juncId].isAmber = false;
+                junctionStates[juncId].isAllRed = false;
                 document.getElementById("junctionModeTag").textContent = "MANUAL OVERRIDE";
                 document.getElementById("junctionModeTag").style.color = "var(--accent-amber)";
                 logDispatchEvent("Override", `Manual override set for ${juncId}: Phase ${phase}`);
@@ -4410,6 +4632,8 @@
         function clearJunctionOverride(juncId) {
             if (junctionStates[juncId]) {
                 junctionStates[juncId].manualOverride = null;
+                junctionStates[juncId].phaseTime = 0;
+                junctionStates[juncId].nextInferenceTimer = 0.5;
                 document.getElementById("junctionModeTag").textContent = "AUTONOMOUS RL";
                 document.getElementById("junctionModeTag").style.color = "var(--accent-cyan)";
                 logDispatchEvent("Restore", `Autonomous RL control restored for ${juncId}`);
@@ -4429,7 +4653,7 @@
 
             if (isSimRunning) {
                 updateVehicles(dt);
-                updateTrafficSignals();
+                updateTrafficSignals(dt);
             }
 
             // Silky smooth camera tracking for followed vehicle
@@ -4464,7 +4688,7 @@
 
         function stepCitySimulation() {
             updateVehicles(1 / 60);
-            updateTrafficSignals();
+            updateTrafficSignals(1 / 60);
             updateInspectorUI();
             renderCityCanvas();
         }
@@ -4476,7 +4700,13 @@
             for (const state of Object.values(junctionStates)) {
                 state.queues = [3.5, 3.8, 2.5, 2.8];
                 state.phase = 0;
-                state.phaseCounter = 1;
+                state.targetPhase = 0;
+                state.phaseTime = 0;
+                state.isAmber = false;
+                state.amberTimer = 0;
+                state.isAllRed = false;
+                state.allRedTimer = 0;
+                state.nextInferenceTimer = 0.5;
                 state.manualOverride = null;
             }
             updateInspectorUI();
@@ -4484,8 +4714,8 @@
         }
 
         function updateSimSpeed(val) {
-            simSpeed = parseFloat(val) * 0.5;
-            document.getElementById("speedLabel").textContent = simSpeed.toFixed(1) + "x";
+            simSpeed = parseFloat(val);
+            document.getElementById("speedLabel").textContent = (simSpeed % 1 === 0 ? simSpeed.toFixed(1) : simSpeed.toFixed(2)) + "x";
         }
 
         function toggleDayNight() {

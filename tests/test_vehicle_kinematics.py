@@ -235,19 +235,190 @@ def run_kinematics_verification():
         assert corridor_switches > 0, "No corridor switches detected!"
         print(f"[PASS] Active intersection Bezier turns: {turns_detected}, Corridor switches: {corridor_switches}", flush=True)
 
-        # 9. Capture Chase Cam Screenshot
+        # 9. Slower Simulation Speed & Observable Kinematics Verification
+        print("[KINEMATICS] Verifying slower, observable simulation speeds and speed slider...", flush=True)
+        speed_info = page.evaluate("""() => {
+            const speeds = vehicles.map(v => v.targetSpeed);
+            const slider = document.getElementById('simSpeedRange');
+            const label = document.getElementById('speedLabel');
+            return {
+                simSpeed: simSpeed,
+                sliderVal: slider ? slider.value : null,
+                labelText: label ? label.textContent.trim() : null,
+                minTargetSpeed: Math.min(...speeds),
+                maxTargetSpeed: Math.max(...speeds),
+                avgTargetSpeed: speeds.reduce((a, b) => a + b, 0) / speeds.length
+            };
+        }""")
+        assert speed_info["simSpeed"] <= 0.85, f"Expected default simSpeed <= 0.85, got {speed_info['simSpeed']}"
+        assert speed_info["sliderVal"] == "0.75", f"Expected speed slider value '0.75', got {speed_info['sliderVal']}"
+        assert "0.75" in speed_info["labelText"], f"Expected speed label '0.75x', got {speed_info['labelText']}"
+        assert 0.80 <= speed_info["minTargetSpeed"] and speed_info["maxTargetSpeed"] <= 1.35, \
+            f"Target speed range out of bounds: min={speed_info['minTargetSpeed']}, max={speed_info['maxTargetSpeed']}"
+        print(f"[PASS] Slower simulation speed verified: simSpeed={speed_info['simSpeed']}x (Target speed range: {speed_info['minTargetSpeed']:.2f} - {speed_info['maxTargetSpeed']:.2f} px/frame)", flush=True)
+
+        # 10. Traffic Signal Timing State Machine Verification (>= 8.0s Green, No Flickering)
+        print("[KINEMATICS] Verifying traffic signal timing state machine across all 6 junctions...", flush=True)
+        signal_timing = page.evaluate("""() => {
+            const timings = [];
+            for (const [id, state] of Object.entries(junctionStates)) {
+                timings.push({
+                    id: id,
+                    minGreen: state.minGreen,
+                    amberDuration: state.amberDuration,
+                    allRedDuration: state.allRedDuration,
+                    phase: state.phase,
+                    phaseTime: state.phaseTime,
+                    isAmber: state.isAmber,
+                    isAllRed: state.isAllRed
+                });
+            }
+            return timings;
+        }""")
+        for st in signal_timing:
+            assert st["minGreen"] >= 8.0, f"Junction {st['id']} minGreen {st['minGreen']}s is less than 8.0s requirement!"
+            assert st["amberDuration"] >= 3.0, f"Junction {st['id']} amberDuration {st['amberDuration']}s is less than 3.0s!"
+            assert st["allRedDuration"] >= 1.5, f"Junction {st['id']} allRedDuration {st['allRedDuration']}s is less than 1.5s!"
+            print(f"[PASS] Junction {st['id']}: minGreen={st['minGreen']:.1f}s, amberDuration={st['amberDuration']:.1f}s, allRedDuration={st['allRedDuration']:.1f}s", flush=True)
+
+        # Monitor signal stability over 3.0 seconds: confirm NO rapid flickering occurs
+        signal_flicker_violations = 0
+        prev_signals = page.evaluate("""() => {
+            const map = {};
+            for (const [id, s] of Object.entries(junctionStates)) {
+                map[id] = { phase: s.phase, isAmber: s.isAmber, isAllRed: s.isAllRed, phaseTime: s.phaseTime };
+            }
+            return map;
+        }""")
+        for _ in range(15):
+            page.wait_for_timeout(200)
+            curr_signals = page.evaluate("""() => {
+                const map = {};
+                for (const [id, s] of Object.entries(junctionStates)) {
+                    map[id] = { phase: s.phase, isAmber: s.isAmber, isAllRed: s.isAllRed, phaseTime: s.phaseTime };
+                }
+                return map;
+            }""")
+            for junc_id, curr_s in curr_signals.items():
+                prev_s = prev_signals[junc_id]
+                # If phase changed without transitioning through amber and holding minGreen, record violation
+                if curr_s["phase"] != prev_s["phase"] and not (prev_s["isAmber"] or prev_s["isAllRed"]):
+                    if prev_s["phaseTime"] < 8.0:
+                        signal_flicker_violations += 1
+            prev_signals = curr_signals
+        assert signal_flicker_violations == 0, f"Detected {signal_flicker_violations} signal flicker violations!"
+        print("[PASS] Signal timing state machine verified: ZERO rapid flickering, >=8.0s minGreen hold confirmed.", flush=True)
+
+        # 11. Cars Approaching Red Signal: Stop Bar Clamping & Speed = 0 Holding
+        print("[KINEMATICS] Verifying cars stop at red signals and hold speed=0 at stop bar...", flush=True)
+        red_stop_data = page.evaluate("""() => {
+            const results = [];
+            for (const v of vehicles) {
+                if (!v.nextIntersection || v.state === 'TURNING' || v.isEmergency) continue;
+                const corr = CORRIDORS[v.corridorId];
+                const junc = INTERSECTIONS[v.nextIntersection];
+                const juncState = junctionStates[v.nextIntersection];
+                const sig = getJunctionSignal(juncState, corr.isHorizontal);
+                const distToCenter = corr.isHorizontal ? (junc.x - v.x) * v.direction : (junc.y - v.y) * v.direction;
+                const stopLineDist = distToCenter - 38;
+
+                // Car is at or behind stop bar during red/amber
+                if ((sig === 'red' || sig === 'amber') && stopLineDist <= 0 && distToCenter >= -20) {
+                    results.push({
+                        id: v.id,
+                        speed: v.speed,
+                        accel: v.accel,
+                        isBraking: v.isBraking,
+                        stopLineDist: stopLineDist,
+                        sig: sig
+                    });
+                }
+            }
+            return results;
+        }""")
+        print(f"[KINEMATICS] Active vehicles queued at red signals: {len(red_stop_data)}", flush=True)
+        for r_veh in red_stop_data:
+            assert r_veh["speed"] == 0.0, f"Vehicle #{r_veh['id']} did not hold speed 0 at red light: speed={r_veh['speed']}"
+            assert r_veh["isBraking"], f"Vehicle #{r_veh['id']} brake light not active while stopped at red light"
+        if len(red_stop_data) > 0:
+            print(f"[PASS] Stop bar compliance: all {len(red_stop_data)} queued vehicles holding speed = 0.0 at red lights.", flush=True)
+
+        # 12. Zero Inter-Vehicle Bounding Box Collisions (Minimum Distance >= 24px)
+        print("[KINEMATICS] Verifying 0 inter-vehicle bounding box collisions (min distance >= 24px)...", flush=True)
+        min_fleet_dist = 9999.0
+        collision_violations = []
+
+        for sample_step in range(25):
+            pair_check = page.evaluate("""() => {
+                let minDist = 9999;
+                let closestPair = null;
+                const violations = [];
+
+                for (let i = 0; i < vehicles.length; i++) {
+                    const v1 = vehicles[i];
+                    for (let j = i + 1; j < vehicles.length; j++) {
+                        const v2 = vehicles[j];
+                        const d = Math.hypot(v2.x - v1.x, v2.y - v1.y);
+                        if (d < minDist) {
+                            minDist = d;
+                            closestPair = [v1.id, v2.id];
+                        }
+                        if (d < 24.0) {
+                            violations.push({ id1: v1.id, id2: v2.id, dist: d });
+                        }
+                    }
+                }
+                return { minDist, closestPair, violations };
+            }""")
+            if pair_check["minDist"] < min_fleet_dist:
+                min_fleet_dist = pair_check["minDist"]
+            if pair_check["violations"]:
+                collision_violations.extend(pair_check["violations"])
+            page.wait_for_timeout(100)
+
+        print(f"[KINEMATICS] Minimum inter-vehicle bumper distance recorded: {min_fleet_dist:.2f}px", flush=True)
+        assert len(collision_violations) == 0, f"Inter-vehicle collisions detected! Violations: {collision_violations}"
+        assert min_fleet_dist >= 24.0, f"Minimum vehicle separation violated: {min_fleet_dist:.2f}px < 24.0px"
+        print(f"[PASS] 0 inter-vehicle collisions verified across fleet! Min distance {min_fleet_dist:.2f}px >= 24.0px.", flush=True)
+
+        # 13. Turning Vehicles Yield & Non-Clipping Verification
+        print("[KINEMATICS] Verifying turning vehicles yield and maintain safe clearance...", flush=True)
+        turn_safety_data = page.evaluate("""() => {
+            const turning = vehicles.filter(v => v.state === 'TURNING');
+            let minTurningDist = 9999;
+            let clippingViolations = 0;
+
+            for (const tv of turning) {
+                for (const ov of vehicles) {
+                    if (tv.id === ov.id) continue;
+                    const d = Math.hypot(ov.x - tv.x, ov.y - tv.y);
+                    if (d < minTurningDist) minTurningDist = d;
+                    if (d < 24.0) clippingViolations++;
+                }
+            }
+            return {
+                turningCount: turning.length,
+                minTurningDist: minTurningDist,
+                clippingViolations: clippingViolations
+            };
+        }""")
+        print(f"[PASS] Active turning vehicles: {turn_safety_data['turningCount']}, Min clearance to other vehicles: {turn_safety_data['minTurningDist']:.2f}px", flush=True)
+        assert turn_safety_data["clippingViolations"] == 0, f"Turning vehicles clipped into other vehicles: {turn_safety_data}"
+        print("[PASS] Turning vehicle clearance verified: ZERO clipping into cruising or opposing vehicles.", flush=True)
+
+        # 14. Capture Chase Cam Screenshot
         shot_chase = os.path.join(ROOT_DIR, "results", "chase_cam_telemetry.png")
         page.screenshot(path=shot_chase, full_page=False)
         assert os.path.exists(shot_chase) and os.path.getsize(shot_chase) > 20000, "Chase cam screenshot failed"
         print(f"[PASS] Chase Cam Telemetry screenshot saved to {shot_chase} ({os.path.getsize(shot_chase)} bytes)", flush=True)
 
-        # 10. Test Disengaging Chase Cam
+        # 15. Test Disengaging Chase Cam
         page.evaluate("() => disengageChaseCam()")
         is_disengaged = page.evaluate("() => followedVehicleId === null && document.getElementById('vehicleChaseHud').style.display === 'none'")
         assert is_disengaged, "Chase Cam failed to disengage cleanly!"
         print("[PASS] Chase Cam disengagement verified cleanly.", flush=True)
 
-        # 11. Check Console Errors
+        # 16. Check Console Errors
         assert len(console_errors) == 0, f"Found console errors: {console_errors}"
         print("[PASS] Zero console errors during vehicle kinematics verification!", flush=True)
 
@@ -262,6 +433,10 @@ def run_kinematics_verification():
     print("ALL VEHICLE KINEMATICS, 3D GROUND CONTACT & CHASE CAM VERIFICATIONS PASSED 100%!")
     print("=======================================================", flush=True)
     return True
+
+
+def test_vehicle_kinematics():
+    assert run_kinematics_verification()
 
 
 if __name__ == "__main__":
